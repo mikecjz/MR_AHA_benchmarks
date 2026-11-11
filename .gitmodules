@@ -1,0 +1,4 @@
+[submodule "third_party/MR_AHA"]
+	path = third_party/MR_AHA
+	url = https://github.com/mikecjz/MR_AHA.git
+	branch = main

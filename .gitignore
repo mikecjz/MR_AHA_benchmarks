@@ -1,0 +1,10 @@
+# Benchmark output (written by python/bench_aha.py and matlab/bench_aha.m)
+results/
+
+# Problems saved with --save-data, and other local data
+*.mat
+*.npz
+data/
+
+__pycache__/
+*.asv
