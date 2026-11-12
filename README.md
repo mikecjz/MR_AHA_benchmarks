@@ -16,6 +16,10 @@ several GPUs, and prints how long the set-up and one application take:
 * [`python/`](python/): `bench_aha.py`, a command-line script. [How to run it](python/README.md).
 * [`matlab/`](matlab/): `bench_aha.m`, a function with the same options.
   [How to run it](matlab/README.md).
+* [`bart/`](bart/): `bench_bart.py`, the same problems with
+  [BART](https://codeberg.org/mrirecon/bart)'s subspace Toeplitz $A^H A$ on the GPU (pinned
+  submodule `bart/bart`, built with CUDA by `bart/build_bart.sh`), next to MR_AHA's.
+  [What BART implements, how to build and run it, results](bart/README.md).
 
 Both take the same options: the problem (four synthetic presets, custom sizes, or your own data
 file), the methods, the GPU counts, masked or unmasked Toeplitz, NUFFT settings, repetitions, an
