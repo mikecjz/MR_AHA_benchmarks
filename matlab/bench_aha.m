@@ -10,12 +10,12 @@ function report = bench_aha(varargin)
 %   set-up and one application take.
 %
 %   METHODS ('methods')
-%     'toeplitz'      MR_AHA_OP.CREATE_OP(..., 'method', 'toeplitz'). The
+%     'toeplitz'      MR_AHA.CREATE_OP(..., 'method', 'toeplitz'). The
 %                     Toeplitz kernel is computed at creation; one
 %                     application is, per coil, a zero-padded FFT, a
 %                     block-diagonal multiplication and an inverse FFT. One
 %                     or several GPUs.
-%     'nufft_c'       MR_AHA_OP.CREATE_OP(..., 'method', 'nufft'): per coil a
+%     'nufft_c'       MR_AHA.CREATE_OP(..., 'method', 'nufft'): per coil a
 %                     type-2 NUFFT, the Gram multiplication and a type-1
 %                     NUFFT, all inside the C/CUDA library. One or several
 %                     GPUs.
@@ -108,7 +108,7 @@ function report = bench_aha(varargin)
 %   On Apple silicon (Metal backend) the same call works with ordinary
 %   MATLAB arrays on the one GPU.
 %
-%   See also BENCH_PROBLEM, MR_AHA_OP, AHA_CUFINUFFT, MR_NUFFT_PLAN.
+%   See also BENCH_PROBLEM, MR_AHA, AHA_CUFINUFFT, MR_NUFFT_PLAN.
 
 %   Author: Junzhou Chen (junzhou@chen.engineer)
 
@@ -274,7 +274,7 @@ function setup_paths(o, repo)
     if isempty(mex_dir), mex_dir = fullfile(root, 'build', 'matlab'); end
     addpath(fullfile(root, 'matlab'));
     if isfolder(mex_dir), addpath(mex_dir); end
-    if exist('mr_aha_op_mex', 'file') ~= 3
+    if exist('mr_aha_mex', 'file') ~= 3
         error('bench_aha:paths', ['The MR_AHA MEX files are not in %s.\n' ...
               'Build them (see the README of this repository):\n' ...
               '  cmake -S %s -B %s -DMR_AHA_BUILD_MATLAB=ON ' ...
@@ -420,7 +420,7 @@ function [f, cleanup, info] = make_op(method, d, n_gpus, masked, o, g)
                 info.mask_keep = numel(mask) / prod(cfg.phi2_dim);
                 args = [args, {'mask', mask}];
             end
-            op = mr_aha_op.create_op(d.SEs, d.phi2, d.traj, cfg, args{:});
+            op = mr_aha.create_op(d.SEs, d.phi2, d.traj, cfg, args{:});
             s = op.info();
             info.gpus_used = double(s.n_devices);
             info.kernel_s = double(s.toep_ms) / 1e3;
@@ -432,7 +432,7 @@ function [f, cleanup, info] = make_op(method, d, n_gpus, masked, o, g)
             if ~isempty(fieldnames(nopts))
                 args = [args, {'nufft_opts', nopts}];
             end
-            op = mr_aha_op.create_op(d.SEs, d.phi2, d.traj, cfg, args{:});
+            op = mr_aha.create_op(d.SEs, d.phi2, d.traj, cfg, args{:});
             s = op.info();
             info.gpus_used = double(s.n_devices);
             f = @(x) op.apply(x);
