@@ -19,7 +19,7 @@ function report = bench_aha(varargin)
 %                     type-2 NUFFT, the Gram multiplication and a type-1
 %                     NUFFT, all inside the C/CUDA library. One or several
 %                     GPUs.
-%     'nufft_native'  MR_NUFFT_PLAN + AHA_CUFINUFFT: the same NUFFT operator
+%     'nufft_native'  AHA_NUFFT_PLAN: the same NUFFT operator
 %                     written in MATLAB with gpuArrays and cufinufft's own
 %                     MATLAB interface, without the library. Always one GPU.
 %                     Needs cufinufft's MATLAB interface (CUFINUFFT_PLAN) on
@@ -108,7 +108,7 @@ function report = bench_aha(varargin)
 %   On Apple silicon (Metal backend) the same call works with ordinary
 %   MATLAB arrays on the one GPU.
 %
-%   See also BENCH_PROBLEM, MR_AHA, AHA_CUFINUFFT, MR_NUFFT_PLAN.
+%   See also BENCH_PROBLEM, MR_AHA, AHA_NUFFT_PLAN.
 
 %   Author: Junzhou Chen (junzhou@chen.engineer)
 
@@ -439,19 +439,9 @@ function [f, cleanup, info] = make_op(method, d, n_gpus, masked, o, g)
             cleanup = @() delete(op);
         otherwise                                   % nufft_native
             nv = [fieldnames(nopts), struct2cell(nopts)].';
-            plan = mr_nufft_plan(d.traj, cfg, nv{:});
-            f = @(x) AhA_cufinufft(x, d.SEs, d.phi2, d.traj, cfg, plan);
-            cleanup = @() free_plan(plan);
-    end
-end
-
-function free_plan(plan)
-%FREE_PLAN  Release the cufinufft plans of MR_NUFFT_PLAN (CUDA backend).
-    for f = {'t1', 't2'}
-        if isfield(plan, f{1}) && isobject(plan.(f{1})) && ...
-                ismethod(plan.(f{1}), 'delete') && isvalid(plan.(f{1}))
-            delete(plan.(f{1}));
-        end
+            plan = aha_nufft_plan(d.traj, cfg, nv{:});
+            f = @(x) plan.apply(x, d.SEs, d.phi2);
+            cleanup = @() delete(plan);
     end
 end
 

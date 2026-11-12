@@ -16,7 +16,7 @@ Methods (``--methods``)
     NUFFT, the Gram multiplication and a type-1 NUFFT, all inside the C/CUDA
     library (cufinufft's C API). One or several GPUs.
 ``nufft_native``
-    :class:`mr_aha.AhANufftPlan`: the same NUFFT operator written in Python
+    :class:`mr_aha.aha_nufft_plan`: the same NUFFT operator written in Python
     with CuPy and cufinufft's own Python interface, without the library.
     Always one GPU. On Apple silicon it runs on MLX and mlx-nufft.
 
@@ -303,7 +303,7 @@ def make_op(method: str, prob: dict, devices, masked: bool, args):
                               nufft_opts=nopts or None, **multi)
         return op, op.close, dict(devices=list(op.info["devices"]))
 
-    plan = mr_aha.AhANufftPlan(cfg, traj, **nopts)
+    plan = mr_aha.aha_nufft_plan(cfg, traj, **nopts)
     return (lambda v: plan.apply(v, SEs, phi2)), plan.close, dict(
         devices=list(devices[:1]))
 
