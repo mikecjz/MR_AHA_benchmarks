@@ -58,7 +58,7 @@ is the primary GPU; `--gpus 4` adds the next three.
 | `--setup-reps` | operator creations (first reported as cold) | 1 |
 | `--cg N` | also time N conjugate-gradient iterations | off |
 | `--check` | relative difference of every result to the first row's | off |
-| `--out FILE` | JSON output | `results/<host>/bench_aha_<time>.json` |
+| `--out FILE` | JSON output | `results/<gpu>/bench_aha_<time>.json` (`<gpu>`: the GPU model, e.g. `titan_rtx`) |
 
 `python bench_aha.py --help` prints the same list.
 

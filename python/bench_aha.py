@@ -75,7 +75,8 @@ The library is taken from ``$MR_AHA_ROOT`` if that is set, otherwise from the
 ``third_party/MR_AHA`` submodule of this repository, otherwise from an
 installed ``mr_aha`` package; ``$MR_AHA_LIBRARY`` names the shared library
 explicitly. Results are printed and written as JSON to
-``results/<host>/bench_aha_<time>.json`` (or ``--out``).
+``results/<gpu>/bench_aha_<time>.json`` (or ``--out``), where ``<gpu>`` is
+the GPU model, e.g. ``titan_rtx``.
 """
 
 from __future__ import annotations
@@ -83,7 +84,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import socket
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -205,17 +207,24 @@ def gpu_info() -> dict:
     """Describe the machine: GPUs and the versions that matter for timing.
 
     Returns:
-        ``dict`` with ``host``, ``backend``, ``gpus`` (name and memory of
+        ``dict`` with ``backend``, ``gpus`` (name and memory of
         every visible GPU) and the versions of ``mr_aha`` and of the array and
         NUFFT packages in use.
     """
-    out = dict(host=socket.gethostname().split(".")[0], backend=BACKEND,
+    out = dict(backend=BACKEND,
                mr_aha=getattr(mr_aha, "__version__", "unknown"),
                numpy=np.__version__)
     if BACKEND != "cuda":
         import platform  # noqa: PLC0415
 
-        out["gpus"] = [dict(name=platform.processor() or "Apple GPU")]
+        name = "Apple GPU"
+        try:
+            name = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                                  capture_output=True, text=True,
+                                  check=True).stdout.strip() or name
+        except (OSError, subprocess.CalledProcessError):
+            pass
+        out["gpus"] = [dict(name=name or platform.processor())]
         return out
     gpus = []
     for d in range(visible_gpus()):
@@ -231,6 +240,18 @@ def gpu_info() -> dict:
     except ImportError:
         out["cufinufft"] = None
     return out
+
+
+def gpu_folder(name: str) -> str:
+    """Folder name for a GPU model: ``"NVIDIA TITAN RTX"`` -> ``"titan_rtx"``.
+
+    The vendor and the memory size and type (``80GB``, ``HBM3``, ``PCIe``,
+    ``SXM``) are dropped, so ``"NVIDIA H100 80GB HBM3"`` -> ``"h100"`` and
+    ``"Apple M3 Ultra"`` -> ``"m3_ultra"``.
+    """
+    words = re.findall(r"[a-z0-9]+", name.lower())
+    drop = re.compile(r"nvidia|apple|\d+gb|hbm\d*|pcie|sxm\d*")
+    return "_".join(w for w in words if not drop.fullmatch(w)) or "gpu"
 
 
 # --------------------------------------------------------------------------
@@ -653,7 +674,7 @@ def parse_args(argv=None) -> argparse.Namespace:
                         "the first row's")
     g.add_argument("--out", default=None, metavar="FILE",
                    help="JSON output file (default: "
-                        "results/<host>/bench_aha_<time>.json)")
+                        "results/<gpu>/bench_aha_<time>.json)")
     args = ap.parse_args(argv)
     if args.reps < 1 or args.warmup < 1 or args.setup_reps < 1:
         ap.error("--reps, --warmup and --setup-reps must be at least 1")
@@ -708,7 +729,7 @@ def main(argv=None) -> int:
 
     info = gpu_info()
     names = ", ".join(sorted({g["name"] for g in info["gpus"]}))
-    print(f"host {info['host']}, backend {BACKEND}, {n_vis} GPU(s) visible: "
+    print(f"backend {BACKEND}, {n_vis} GPU(s) visible: "
           f"{names}")
     for var in ("MR_AHA_TOEP_SPLIT", "MR_AHA_MGPU_SPLIT", "MR_AHA_MGPU_MIN_WORK"):
         if os.environ.get(var):
@@ -721,7 +742,7 @@ def main(argv=None) -> int:
                        if k.startswith("MR_AHA_") or k == "CUDA_VISIBLE_DEVICES"},
                   problems=[])
     out = Path(args.out) if args.out else (
-        REPO / "results" / info["host"]
+        REPO / "results" / gpu_folder(info["gpus"][0]["name"])
         / f"bench_aha_{time.strftime('%Y%m%d-%H%M%S')}.json")
 
     warm_up(methods, args)

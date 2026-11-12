@@ -23,7 +23,7 @@ optional conjugate-gradient run and an optional accuracy check.
 
 ```
 $ python python/bench_aha.py
-host pact400-recon3, backend cuda, 1 GPU(s) visible: NVIDIA TITAN RTX
+backend cuda, 1 GPU(s) visible: NVIDIA TITAN RTX
 
 == 2d: 2D golden-angle radial 160x160, L=6, 16 coils, 377x160 samples
    unmasked Toeplitz kernel 0.02 GB
@@ -88,7 +88,7 @@ operator (`--mask on`) stores less.
 | `CG s` | With `--cg N`: time of N plain conjugate-gradient iterations. |
 | `diff` | With `--check`: relative difference of this row's $A^H A x$ to the first row's. |
 
-Each run also writes a JSON file under `results/<host>/` with these numbers and more (cold set-up
+Each run also writes a JSON file under `results/<gpu>/` (the GPU model, e.g. `results/titan_rtx/`) with these numbers and more (cold set-up
 time, kernel time, mask time, minimum and mean application time, GPU model, versions, options).
 
 Timing notes:

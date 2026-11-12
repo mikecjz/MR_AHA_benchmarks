@@ -61,7 +61,7 @@ with `CUDA_VISIBLE_DEVICES`.
 | `'setup_reps'` | operator creations (first reported as cold) | 1 |
 | `'cg'` | also time this many conjugate-gradient iterations | 0 |
 | `'check'` | relative difference of every result to the first row's | false |
-| `'out'` | JSON output | `results/<host>/bench_aha_matlab_<time>.json` |
+| `'out'` | JSON output | `results/<gpu>/bench_aha_matlab_<time>.json` (`<gpu>`: the GPU model, e.g. `titan_rtx`) |
 | `'mr_aha_root'`, `'mex_dir'`, `'cufinufft_dir'` | where the library is | see above |
 
 `help bench_aha` prints the full description.

@@ -66,7 +66,8 @@ function report = bench_aha(varargin)
 %     'check'       true: report the relative difference of every A'A x to
 %                   the first row's (default false)
 %     'out'         JSON output file (default
-%                   results/<host>/bench_aha_matlab_<time>.json)
+%                   results/<gpu>/bench_aha_matlab_<time>.json, <gpu> =
+%                   the GPU model, e.g. titan_rtx)
 %
 %   NAME-VALUE PAIRS: WHERE THE LIBRARY IS
 %     'mr_aha_root'    MR_AHA checkout. Default: the environment variable
@@ -177,7 +178,9 @@ function report = bench_aha(varargin)
     else
         g = [];
         n_vis = 1;
-        gpu_names = {'Apple GPU'};
+        [st, chip] = system('sysctl -n machdep.cpu.brand_string');
+        if st ~= 0 || isempty(strtrim(chip)), chip = 'Apple GPU'; end
+        gpu_names = {strtrim(chip)};
     end
     if ischar(o.gpus) || isstring(o.gpus)
         if ~strcmpi(o.gpus, 'all')
@@ -213,9 +216,7 @@ function report = bench_aha(varargin)
         end
     end
 
-    [~, host] = system('hostname -s');
-    host = strtrim(host);
-    fprintf('host %s, backend %s, %d GPU(s) visible: %s\n', host, backend, ...
+    fprintf('backend %s, %d GPU(s) visible: %s\n', backend, ...
             n_vis, gpu_names{1});
     for v = {'MR_AHA_TOEP_SPLIT', 'MR_AHA_MGPU_SPLIT', 'MR_AHA_MGPU_MIN_WORK'}
         if ~isempty(getenv(v{1}))
@@ -224,7 +225,7 @@ function report = bench_aha(varargin)
         end
     end
 
-    report = struct('host', host, 'backend', backend, 'gpu', gpu_names{1}, ...
+    report = struct('backend', backend, 'gpu', gpu_names{1}, ...
                     'gpus_visible', n_vis, 'matlab', version, ...
                     'time', datestr(now, 'yyyy-mm-dd HH:MM:SS'), ...
                     'options', rmfield(o, {'mr_aha_root', 'mex_dir', ...
@@ -232,7 +233,7 @@ function report = bench_aha(varargin)
                     'problems', {{}}); %#ok<DATST,TNOW1>
     out = char(o.out);
     if isempty(out)
-        out = fullfile(repo, 'results', host, ['bench_aha_matlab_' ...
+        out = fullfile(repo, 'results', gpu_folder(gpu_names{1}), ['bench_aha_matlab_' ...
                        datestr(now, 'yyyymmdd-HHMMSS') '.json']); %#ok<DATST,TNOW1>
     end
     if ~exist(fileparts(out), 'dir') && ~isempty(fileparts(out))
@@ -443,6 +444,18 @@ function [f, cleanup, info] = make_op(method, d, n_gpus, masked, o, g)
             f = @(x) plan.apply(x, d.SEs, d.phi2);
             cleanup = @() delete(plan);
     end
+end
+
+function f = gpu_folder(name)
+%GPU_FOLDER  Folder name for a GPU model: 'NVIDIA TITAN RTX' -> 'titan_rtx'.
+%   The vendor and the memory size and type (80GB, HBM3, PCIe, SXM) are
+%   dropped, so 'NVIDIA H100 80GB HBM3' -> 'h100', 'Apple M3 Ultra' ->
+%   'm3_ultra'.
+    words = regexp(lower(char(name)), '[a-z0-9]+', 'match');
+    keep = cellfun(@isempty, regexp(words, ...
+        '^(nvidia|apple|\d+gb|hbm\d*|pcie|sxm\d*)$', 'once'));
+    f = strjoin(words(keep), '_');
+    if isempty(f), f = 'gpu'; end
 end
 
 function warm_up(methods, o, g)
