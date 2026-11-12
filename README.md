@@ -16,6 +16,9 @@ several GPUs, and prints how long the set-up and one application take:
 * [`python/`](python/): `bench_aha.py`, a command-line script. [How to run it](python/README.md).
 * [`matlab/`](matlab/): `bench_aha.m`, a function with the same options.
   [How to run it](matlab/README.md).
+* [`julia/`](julia/): `bench_aha.jl`, the same problems with the Toeplitz normal operator of
+  [MRISubspaceRecon.jl](https://github.com/MagneticResonanceImaging/MRISubspaceRecon.jl)
+  (CUDA.jl), for comparison with another package. [How to run it and the comparison](julia/README.md).
 
 Both take the same options: the problem (four synthetic presets, custom sizes, or your own data
 file), the methods, the GPU counts, masked or unmasked Toeplitz, NUFFT settings, repetitions, an
