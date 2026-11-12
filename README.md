@@ -20,8 +20,11 @@ several GPUs, and prints how long the set-up and one application take:
   [BART](https://codeberg.org/mrirecon/bart)'s subspace Toeplitz $A^H A$ on the GPU (pinned
   submodule `bart/bart`, built with CUDA by `bart/build_bart.sh`), next to MR_AHA's.
   [What BART implements, how to build and run it, results](bart/README.md).
+* [`julia/`](julia/): `bench_aha.jl`, the same problems with the Toeplitz normal operator of
+  [MRISubspaceRecon.jl](https://github.com/MagneticResonanceImaging/MRISubspaceRecon.jl)
+  (CUDA.jl), for comparison with another package. [How to run it and the comparison](julia/README.md).
 
-Both take the same options: the problem (four synthetic presets, custom sizes, or your own data
+`python/` and `matlab/` take the same options: the problem (four synthetic presets, custom sizes, or your own data
 file), the methods, the GPU counts, masked or unmasked Toeplitz, NUFFT settings, repetitions, an
 optional conjugate-gradient run and an optional accuracy check.
 

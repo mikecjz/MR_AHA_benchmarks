@@ -6,3 +6,6 @@
 	path = bart/bart
 	url = https://codeberg.org/mrirecon/bart.git
 	ignore = untracked
+[submodule "julia/MRISubspaceRecon.jl"]
+	path = julia/MRISubspaceRecon.jl
+	url = https://github.com/MagneticResonanceImaging/MRISubspaceRecon.jl
