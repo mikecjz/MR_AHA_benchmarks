@@ -131,6 +131,37 @@ Observations:
   operator (`3d`: 18.5 GB, against 15.1 GB masked and 24.0 GB unmasked for MR_AHA; the package
   also keeps two `2N × L` work arrays).
 
+### L40S and H100
+
+Same settings, one GPU, on the HPC with `hpc/bench_julia.sbatch` (MR_AHA 711003d built for sm_89 /
+sm_90, Julia 1.11.7, CUDA.jl 6.5.1 with its own CUDA 13.4 runtime). A^H A in ms (set-up in s):
+
+| Preset | L40S Julia | L40S MR_AHA masked | L40S MR_AHA toeplitz | H100 Julia | H100 MR_AHA masked | H100 MR_AHA toeplitz |
+|---|---:|---:|---:|---:|---:|---:|
+| `2d` | 0.82 (0.02) | **0.43** (0.21) | 0.43 | 0.89 (0.02) | **0.54** (0.21) | 0.53 |
+| `2d72` | 362 (4.07) | **288** (2.31) | 309 | **76** (4.65) | 165 (2.11) | 335 |
+| `stack` | fails (2-3-5) | **744** (2.59) | 752 | fails (2-3-5) | **170** (1.84) | 178 |
+| `stack`, Nz = 32 | 1140 (19.3) | **412** (1.64) | 417 | 272 (5.26) | **96** (1.05) | 100 |
+| `3d` | 1348 (21.4) | **1016** (7.34) | 1063 | 317 (6.15) | **231** (4.75) | 252 |
+
+* Apart from `2d72` on the H100, the package is 1.3-1.9x slower than MR_AHA's masked operator
+  (2.8x on the stack, which it treats as 3D) and its set-up 1.3-12x slower.
+* `2d72` (L = 72) on the H100 is the exception: the package is 2.2x faster. MR_AHA's Toeplitz
+  operator barely gains from the L40S to the H100 on this problem (and is slower than its own NUFFT
+  there, 199 ms), while every other problem gains 3-4x; its large-L block multiply on sm_90 needs a
+  look.
+* Correctness (`check_mr_aha.py`) is the same as on the TITAN RTX on both GPUs: 1.9e-3 / 3.4e-3 /
+  4.6e-3 against MR_AHA's NUFFT, scalar 0.99999.
+
+Run on a Slurm cluster from the repository root (`third_party/MR_AHA` initialised with
+`--recursive`, problem files in `julia/data/`): `mkdir -p julia/hpc/logs`, then
+`sbatch julia/hpc/setup_julia.sbatch` once (installs the official Julia 1.11.7 tarball in `~/opt`
+and instantiates `julia/` on a compute node), then
+`sbatch --gres=gpu:l40s:1 --export=ALL,ARCH=89 julia/hpc/bench_julia.sbatch` (or `gpu:h100:1`,
+`ARCH=90`). The job script gives each GPU type its own Julia compile cache (`~/.julia_sm<ARCH>`):
+node types with different CPUs sharing `~/.julia/compiled` invalidate each other's native code and
+wait on each other's precompile locks.
+
 ## Requirements and installation
 
 * Julia ≥ 1.11. Without root, e.g. the official tarball (or [juliaup](https://github.com/JuliaLang/juliaup)):
