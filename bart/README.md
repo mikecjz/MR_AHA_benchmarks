@@ -56,6 +56,7 @@ the [top-level README](../README.md); `MR_AHA_ROOT` selects a checkout).
 python bart/bench_bart.py                                   # preset 2d
 python bart/bench_bart.py --problem 2d 2d72 stack 3d --check
 python bart/bench_bart.py --problem stack --methods bart_toep_triag_lowmem mr_aha_toeplitz
+python bart/bench_bart.py --problem 2d --methods bart_pics_cg mr_aha_toeplitz --cg 20
 ```
 
 One GPU: the first of `CUDA_VISIBLE_DEVICES`. Results are printed and written to
@@ -68,7 +69,8 @@ One GPU: the first of `CUDA_VISIBLE_DEVICES`. Results are printed and written to
 | `bart_toep_triag_lowmem` | the same in BART's `lowmem` mode (one of the $2^d$ PSF factors at a time) |
 | `bart_nufft` | no Toeplitz: BART's gridding NUFFT forward + adjoint with the basis |
 | `bart_pics` | through `bart.py`: time per CG iteration of `bart pics -g --gpu-gridding -U --nufft-conf upper-triag-psf` (the operator of `bart_toep_triag_lowmem`), from runs with 5 and 55 iterations (process start, file I/O and PSF cancel) |
-| `mr_aha_toeplitz`, `mr_aha_nufft` | MR_AHA's operators (`mr_aha.create_op`) for reference |
+| `bart_pics_cg` | through `bart.py`: `--cg N` (default 20) CG iterations of `bart pics -g --gpu-gridding` with BART's default full PSF, or `-U` (lowmem) if that runs out of memory. Runs with 1 and N+1 iterations, fastest of `--pics-reps` (3) each; `cg_s` is the difference, `total_s` the whole `pics` call with N iterations (process start, `.cfl` I/O, PSF, scaling, adjoint, CG). BART's CG has no stopping tolerance by default, so every run does all its iterations |
+| `mr_aha_toeplitz`, `mr_aha_nufft` | MR_AHA's operators (`mr_aha.create_op`) for reference; with `--cg N` also N plain CG iterations (`bench_aha.cg_time`, after one untimed iteration) and `total_s` = inputs to the GPU + operator creation + CG |
 
 The `bart_*` operator rows are timed by `bart_aha` (`bart_aha.c`), a ~200-line C program linked
 against BART's libraries. It builds exactly the model of `bart pics` (`sense_nc_init()`: maps ∘
@@ -78,7 +80,7 @@ around each call. This is needed because BART's tools have no "apply $A^H A$" co
 official Python interface: one CG iteration costs one $A^H A$ plus a few vector operations.
 
 Options: `--problem`, `--n`, `--L`, `--coils`, `--spokes`, `--samples`, `--data`, `--methods`,
-`--reps` (10), `--warmup` (2), `--pics-iters K1 K2` (5 55), `--check`, `--tmpdir` (where the
+`--reps` (10), `--warmup` (2), `--pics-iters K1 K2` (5 55), `--cg N`, `--pics-reps` (3), `--check`, `--tmpdir` (where the
 `.cfl` files go; the 3D presets need a few GB), `--out`. `--help` lists them.
 
 ## Results
@@ -106,6 +108,24 @@ libraries (ranges in brackets). Set-up includes the PSF / Toeplitz kernel.
 * Accuracy (`--check`, relative to MR_AHA Toeplitz after the best scalar): BART full PSF 7e-6 (2D) to
   1.6e-5. BART upper-triag 0.3–0.8 with these complex Gram blocks (the conjugation bug above);
   with a real basis 5e-6 to 7e-6 (2D, stack, 3D checked on small problems).
+
+### 20 conjugate-gradient iterations
+
+Same GPU and problems, `--methods bart_pics_cg mr_aha_toeplitz mr_aha_nufft --cg 20`. "End to end"
+is MR_AHA's inputs-to-GPU + operator creation + CG, and BART's whole `pics` call through `bart.py`.
+
+| Problem | MR_AHA Toeplitz CG | BART `pics` CG | | MR_AHA end to end | BART end to end | | MR_AHA NUFFT CG |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `2d` | **0.055 s** | 0.105 s (full PSF) | 1.9× | **0.10 s** | 0.91 s | 9× | 0.40 s |
+| `2d72` with L=24 | **0.88 s** | 3.03 s (full PSF) | 3.4× | **1.26 s** | 6.64 s | 5.3× | 4.59 s |
+| `stack` 160×160×28 | **2.47 s** | 13.7 s (lowmem) | 5.5× | **3.44 s** | 27.3 s | 7.9× | 7.25 s |
+| `3d` 96³ | **6.32 s** | 16.9 s (lowmem) | 2.7× | **10.5 s** | 32.8 s | 3.1× | 38.8 s |
+
+* CG time is almost all $A^H A$ in both, so the CG ratio follows the operator ratio above.
+* BART's end-to-end time adds a process start, `.cfl` I/O and the PSF on every call (≈ 0.9 s on
+  `2d`; on `stack` and `3d` as much as the iterations), because `bart.py` cannot keep an operator
+  alive.
+* The `2d` BART CG time is the difference of two ≈ 1 s calls and varies by ±30 % between runs.
 
 The JSON files are under `results/titan_rtx/bench_bart_*` (not tracked, like all results).
 
