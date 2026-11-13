@@ -39,9 +39,21 @@ Methods (``--methods``)
     conjugate-gradient iteration of ``bart pics -g``, from two runs with
     different iteration counts (start-up, file I/O and PSF cancel out). An
     iteration is one :math:`A^H A` plus a few vector operations.
+``bart_pics_cg``
+    ``--cg N`` conjugate-gradient iterations of ``bart pics -g`` through
+    ``bart.py`` (``N`` = 20 without ``--cg``), BART's default full PSF on the
+    GPU, retried in low-memory mode (``-U``) if that runs out of memory. Runs
+    with 1 and ``N + 1`` iterations (fastest of ``--pics-reps``, 3): ``cg_s`` is their difference (the
+    ``N`` iterations alone; BART's CG has no stopping tolerance by default, so
+    every run does all its iterations), ``total_s`` the wall-clock time of the
+    whole ``pics`` call with ``N`` iterations (process start, ``.cfl`` I/O,
+    PSF, scaling, adjoint and CG).
 ``mr_aha_toeplitz``, ``mr_aha_nufft``
     MR_AHA's Toeplitz and NUFFT operators (``mr_aha.create_op``) on the same
-    problem and GPU, for reference.
+    problem and GPU, for reference. With ``--cg N`` also ``cg_s``, the time of
+    ``N`` plain CG iterations on :math:`A^H A u = b` (``bench_aha.cg_time``),
+    and ``total_s``: copying the inputs to the GPU, creating the operator and
+    the ``N`` iterations.
 
 The ``bart_*`` operator methods (all but ``bart_pics``) are timed by the
 small C program ``bart_aha`` (``bart_aha.c``), linked against BART's
@@ -87,6 +99,7 @@ Examples
     python bart/bench_bart.py --problem 2d 2d72 --check
     python bart/bench_bart.py --problem stack --n 160 160 28 --methods bart_toep_triag mr_aha_toeplitz
     python bart/bench_bart.py --problem 3d --methods bart_toep_triag_lowmem mr_aha_toeplitz
+    python bart/bench_bart.py --problem 2d --methods bart_pics_cg mr_aha_toeplitz --cg 20
 
 Requirements: BART built by ``bart/build_bart.sh`` (``bart/bart/bart`` and
 ``bart/bart_aha``), and the MR_AHA Python interface with CuPy (as for
@@ -127,7 +140,8 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 #: Methods in report order.
 METHODS = ("bart_toep", "bart_toep_triag", "bart_toep_triag_lowmem",
-           "bart_nufft", "bart_pics", "mr_aha_toeplitz", "mr_aha_nufft")
+           "bart_nufft", "bart_pics", "bart_pics_cg", "mr_aha_toeplitz",
+           "mr_aha_nufft")
 
 #: Default methods.
 DEFAULT_METHODS = ("bart_toep", "bart_toep_triag", "bart_toep_triag_lowmem",
@@ -302,31 +316,92 @@ def run_bart_pics(b: dict, prob: dict, args) -> dict:
         ``dict`` with ``iter_ms``, ``t1_s``, ``t2_s``, ``k1``, ``k2`` or
         ``{"error": ...}``.
     """
-    import bart as bartpy  # noqa: PLC0415  (bart/bart/python/bart.py)
-
-    rng = np.random.default_rng(1)
-    nkx, T = b["traj"].shape[1], b["frames"]
-    nc = b["maps"].shape[3]
-    ksp = (rng.standard_normal((1, nkx, 1, nc, 1, T), dtype=np.float32)
-           + 1j * rng.standard_normal((1, nkx, 1, nc, 1, T), dtype=np.float32))
+    ksp = _random_kspace(b)
     k1, k2 = args.pics_iters
     times = []
     for K in (k1, k2):
-        cmd = (f"pics -g --gpu-gridding -U -l2 -r 0.001 -i {K} "
-               f"--nufft-conf upper-triag-psf")
-        t0 = time.perf_counter()
-        with contextlib.redirect_stdout(io.StringIO()):   # bart.py echoes the tool's output
-            out = bartpy.bart(1, cmd, ksp, b["maps"], t=b["traj"],
-                              B=b["basis"])
-        times.append(time.perf_counter() - t0)
-        if bartpy.bart.ERR or out is None:
-            msg = ANSI.sub("", bartpy.bart.stderr or "")
-            if "BART_GPU_GLOBAL_MEMORY" in msg or "out of memory" in msg.lower():
-                return dict(error="GPU out of memory")
-            err = msg.strip().splitlines()[-3:]
-            return dict(error="bart pics failed: " + " | ".join(err))
+        t, err = _pics(b, ksp, K, "-U --nufft-conf upper-triag-psf")
+        if err is not None:
+            return dict(error=err)
+        times.append(t)
     return dict(iter_ms=1e3 * (times[1] - times[0]) / (k2 - k1),
                 t1_s=times[0], t2_s=times[1], k1=k1, k2=k2)
+
+
+def _random_kspace(b: dict) -> np.ndarray:
+    """Random k-space data in BART's layout ``[1, Nkx, 1, Ncoils, 1, T]``."""
+    rng = np.random.default_rng(1)
+    nkx, T = b["traj"].shape[1], b["frames"]
+    nc = b["maps"].shape[3]
+    shape = (1, nkx, 1, nc, 1, T)
+    return (rng.standard_normal(shape, dtype=np.float32)
+            + 1j * rng.standard_normal(shape, dtype=np.float32))
+
+
+def _pics(b: dict, ksp: np.ndarray, iters: int, flags: str):
+    """Run ``bart pics`` through ``bart.py`` once.
+
+    Args:
+        b: BART inputs from :func:`to_bart`.
+        ksp: k-space data.
+        iters: CG iterations (``-i``).
+        flags: Extra ``pics`` options.
+
+    Returns:
+        ``(seconds, None)`` or ``(None, error message)``; an out-of-memory
+        failure is reported as ``"GPU out of memory"``.
+    """
+    import bart as bartpy  # noqa: PLC0415  (bart/bart/python/bart.py)
+
+    cmd = f"pics -g --gpu-gridding -l2 -r 0.001 -i {iters} {flags}".strip()
+    t0 = time.perf_counter()
+    with contextlib.redirect_stdout(io.StringIO()):   # bart.py echoes the tool's output
+        out = bartpy.bart(1, cmd, ksp, b["maps"], t=b["traj"], B=b["basis"])
+    t = time.perf_counter() - t0
+    if bartpy.bart.ERR or out is None:
+        msg = ANSI.sub("", bartpy.bart.stderr or "")
+        if "BART_GPU_GLOBAL_MEMORY" in msg or "out of memory" in msg.lower():
+            return None, "GPU out of memory"
+        return None, "bart pics failed: " + " | ".join(msg.strip().splitlines()[-3:])
+    return t, None
+
+
+def run_bart_pics_cg(b: dict, prob: dict, args) -> dict:
+    """Time ``N`` conjugate-gradient iterations of ``bart pics -g``.
+
+    ``pics`` runs with 1 and ``N + 1`` iterations on random k-space data,
+    each ``--pics-reps`` times (fastest kept); the difference is the time of
+    ``N`` iterations, free of process start, file
+    I/O, PSF computation and the initial adjoint. BART's default (full PSF)
+    is tried first and low-memory mode (``-U``) if it runs out of GPU memory.
+
+    Returns:
+        ``dict`` with ``cg_s``, ``total_s`` (estimated wall-clock time of a
+        whole ``pics`` call with ``N`` iterations), ``cg_iters``, ``mode``
+        (``"full PSF"`` or ``"lowmem"``), ``t1_s``, ``t2_s``, or
+        ``{"error": ...}``.
+    """
+    n = args.cg or 20
+    ksp = _random_kspace(b)
+    err = None
+    for mode, flags in (("full PSF", ""), ("lowmem", "-U")):
+        ts = {}
+        for k in (1, n + 1):
+            for _ in range(args.pics_reps):
+                t, err = _pics(b, ksp, k, flags)
+                if err is not None:
+                    break
+                ts[k] = min(ts.get(k, t), t)
+            if err is not None:
+                break
+        if err is None:
+            t1, t2 = ts[1], ts[n + 1]
+            cg = t2 - t1
+            return dict(cg_s=cg, total_s=t2 - cg / n, cg_iters=n, mode=mode,
+                        t1_s=t1, t2_s=t2)
+        if err != "GPU out of memory":
+            break
+    return dict(error=err)
 
 
 # --------------------------------------------------------------------------
@@ -346,7 +421,11 @@ def run_mr_aha(method: str, prob: dict, args):
         ba.setup()
     xp = ba.xp
     dev = [int(xp.cuda.Device().id)]
+    ba.sync_all(dev)
+    t_in = time.perf_counter()
     d = ba.to_device(prob)
+    ba.sync_all(dev)
+    in_s = time.perf_counter() - t_in
     ns = argparse.Namespace(eps=args.eps, toep_dist="auto", upsampfac=None,
                             gpu_method=None)
     ba.free_pools(dev)
@@ -368,11 +447,17 @@ def run_mr_aha(method: str, prob: dict, args):
         y = op(d["x"])
         ba.sync_all(dev)
         ms.append(1e3 * (time.perf_counter() - t1))
+    row = dict(setup_s=setup_s, apply_ms=ms, mem_gb=mem)
+    if args.cg:
+        ba.cg_time(op, d["x"], 1, dev)      # compiles CuPy's vector kernels
+        cg = ba.cg_time(op, d["x"], args.cg, dev)
+        row.update(cg_s=cg, cg_iters=args.cg, input_s=in_s,
+                   total_s=in_s + setup_s + cg)
     y = xp.asnumpy(y)
     close()
     del op, d
     ba.free_pools(dev)
-    return dict(setup_s=setup_s, apply_ms=ms, mem_gb=mem), y
+    return row, y
 
 
 def compare(a: np.ndarray, ref: np.ndarray) -> dict:
@@ -427,12 +512,19 @@ def fmt(row: dict) -> str:
         return (f"  {name:<24s} {'':>9s} {row['iter_ms']:10.2f}   "
                 f"(per CG iteration; {row['k1']}/{row['k2']} it: "
                 f"{row['t1_s']:.2f}/{row['t2_s']:.2f} s)")
+    if name == "bart_pics_cg":
+        return (f"  {name:<24s} {'':>9s} {'':>10s} {'':>8s}   "
+                f"CG {row['cg_iters']} it {row['cg_s']:.3f} s, whole pics call "
+                f"{row['total_s']:.2f} s ({row['mode']})")
     med = float(np.median(row["apply_ms"]))
     s = f"  {name:<24s} {row['setup_s']:9.3f} {med:10.2f} {row['mem_gb']:8.2f}"
     if "check" in row:
         c = row["check"]
         s += (f"   err {c['rel_err']:.1e} (scale {c['scale'][0]:.3g}"
               f"{c['scale'][1]:+.1e}i)")
+    if "cg_s" in row:
+        s += (f"   CG {row['cg_iters']} it {row['cg_s']:.3f} s, "
+              f"inputs + set-up + CG {row['total_s']:.2f} s")
     return s
 
 
@@ -463,6 +555,8 @@ def run_problem(name: str, prob: dict, methods, args) -> dict:
                     row["check"] = compare(y, ref)
             elif m == "bart_pics":
                 row = run_bart_pics(b, prob, args)
+            elif m == "bart_pics_cg":
+                row = run_bart_pics_cg(b, prob, args)
             else:
                 out = str(tmp / f"y_{m}") if args.check else None
                 row = run_bart_op(m, files, args, out)
@@ -499,6 +593,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--warmup", type=int, default=2, help="untimed applications")
     p.add_argument("--pics-iters", nargs=2, type=int, default=[5, 55],
                    metavar=("K1", "K2"), help="bart_pics iteration counts")
+    p.add_argument("--pics-reps", type=int, default=3,
+                   help="bart_pics_cg: runs per iteration count, fastest kept")
+    p.add_argument("--cg", type=int, default=0, metavar="N",
+                   help="CG iterations: time N iterations with MR_AHA's operators "
+                        "(and bart_pics_cg; 20 if not given)")
     p.add_argument("--eps", type=float, default=1e-6, help="MR_AHA NUFFT tolerance")
     p.add_argument("--check", action="store_true",
                    help="compare every A^H A x with MR_AHA's Toeplitz result")
