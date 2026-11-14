@@ -86,44 +86,45 @@ the Julia result (`bench_aha.jl --data P.mat --save-result Y.mat`). On a TITAN R
 
 `--reps 10 --warmup 2 --setup-reps 3` for both, set-up = median of the warm creations, A^H A =
 median application. MR_AHA: `python/bench_aha.py --methods toeplitz nufft_c --mask both
---setup-reps 3` (library 711003d, cufinufft eps 1e-6). Julia 1.11.7, CUDA.jl 6.5.1,
-NonuniformFFTs 0.9.10, 8 threads. JSON in `results/titan_rtx/bench_aha_julia_*.json` and
-`results/titan_rtx/bench_aha_2026111*-05*.json`.
+--setup-reps 3` (library `c60db28`, cufinufft eps 1e-6), measured on 2026-11-14. Julia 1.11.7,
+CUDA.jl 6.5.1, NonuniformFFTs 0.9.10, 8 threads, measured on 2026-11-12 and not repeated (the
+package is unchanged). JSON in `results/titan_rtx/` (`bench_aha_julia_*.json`, `bench_aha_*.json`).
 
 | Preset | | set-up s | A^H A ms | mem GB |
 |---|---|---:|---:|---:|
 | `2d` 160², L=6, 16 coils | **MRISubspaceRecon.jl** (masked, packed) | 0.030 | **3.05** | 0.03 |
-| | MR_AHA toeplitz | 0.014 | **2.22** | 0.04 |
-| | MR_AHA toeplitz masked | 0.014 | 2.16 | 0.04 |
-| | MR_AHA nufft_c | 0.002 | 20.2 | 0.05 |
+|  | MR_AHA toeplitz | 0.011 | **2.14** | 0.04 |
+|  | MR_AHA toeplitz masked | 0.012 | 2.09 | 0.04 |
+|  | MR_AHA nufft_c | 0.002 | 20.5 | 0.05 |
 | `2d72` 320², L=72, 12 coils | **MRISubspaceRecon.jl** | 5.68 | **802** | 7.48 |
-| | MR_AHA toeplitz | 2.52 | **674** | 8.91 |
-| | MR_AHA toeplitz masked | 2.16 | 583 | 7.36 |
-| | MR_AHA nufft_c | 0.003 | 723 | 0.48 |
+|  | MR_AHA toeplitz | 2.62 | **230** | 9.62 |
+|  | MR_AHA toeplitz masked | 2.17 | 202 | 7.88 |
+|  | MR_AHA nufft_c | 0.003 | 709 | 0.48 |
 | `stack` 320²×56, L=12, 12 coils | **MRISubspaceRecon.jl** | – | **fails**: 2·56 = 112 is not a product of 2, 3, 5 | – |
-| | MR_AHA toeplitz | 3.17 | **1011** | 19.3 |
-| | MR_AHA toeplitz masked | 3.25 | 980 | 16.7 |
-| | MR_AHA nufft_c | 0.005 | 2651 | 2.13 |
+|  | MR_AHA toeplitz | 2.99 | **1012** | 19.3 |
+|  | MR_AHA toeplitz masked | 3.05 | 979 | 16.7 |
+|  | MR_AHA nufft_c | 0.005 | 2625 | 2.13 |
 | `stack`, Nz = 32 instead of 56 | **MRISubspaceRecon.jl** (640×640×64 grid) | 31.7 | **1489** | 18.7 |
-| (substitute that the package accepts) | MR_AHA toeplitz (640×640×32 grid) | 2.05 | **577** | 13.5 |
-| | MR_AHA toeplitz masked | 2.06 | 560 | 12.1 |
-| | MR_AHA nufft_c | 0.004 | 1662 | 1.24 |
+| (substitute that the package accepts) | MR_AHA toeplitz (640×640×32 grid) | 1.98 | **574** | 13.5 |
+|  | MR_AHA toeplitz masked | 1.85 | 555 | 12.1 |
+|  | MR_AHA nufft_c | 0.004 | 1471 | 1.24 |
 | `3d` 160³, L=12, 12 coils | **MRISubspaceRecon.jl** | 36.1 | **1685** | 18.5 |
-| | MR_AHA toeplitz | 19.0 | **1603** | 24.0 |
-| | MR_AHA toeplitz masked | 19.4 | 1378 | 15.1 |
-| | MR_AHA nufft_c | 0.006 | 8571 | 1.40 |
+|  | MR_AHA toeplitz | 18.7 | **1603** | 24.0 |
+|  | MR_AHA toeplitz masked | 18.9 | 1387 | 15.1 |
+|  | MR_AHA nufft_c | 0.005 | 7891 | 1.40 |
 
 Observations:
 
-* **Application.** MRISubspaceRecon.jl's packed, masked Toeplitz operator is 1.2-1.4× slower than
-  MR_AHA's masked Toeplitz operator on the 2D and 3D presets (1.4× / 1.4× / 1.2× for `2d` /
-  `2d72` / `3d`) and 1.05-1.4× slower than MR_AHA's unmasked one. Both are dominated by the same
-  per-coil batched FFTs; the package zero-fills both `2N × L` work arrays per coil and its
-  block multiply (one thread per output, gathering a packed triangle) is slower at large L.
+* **Application.** MRISubspaceRecon.jl's packed, masked Toeplitz operator is 1.2-4.0× slower than
+  MR_AHA's masked Toeplitz operator on the 2D and 3D presets (1.5× / 4.0× / 1.2× for `2d` /
+  `2d72` / `3d`) and 1.05-3.5× slower than MR_AHA's unmasked one. At L = 12 and below both are
+  dominated by the same per-coil batched FFTs; the package zero-fills both `2N × L` work arrays
+  per coil. At L = 72 the block multiply decides: the package uses one thread per output that
+  gathers a packed triangle, MR_AHA its tiled kernels for ranks above 30.
 * **Stack-of-stars.** The package has no stack mode: the preset fails its 2-3-5 size check, and
   where it runs (Nz = 32) it oversamples z by 2 and so does twice the FFT work and stores twice
-  the kernel; MR_AHA's stack operator is 2.6× faster there.
-* **Set-up** (kernel computation) is 2-15× slower in the package (one type-1 NUFFT + FFT per
+  the kernel; MR_AHA's stack operator is 2.7× faster there.
+* **Set-up** (kernel computation) is 2-17× slower in the package (one type-1 NUFFT + FFT per
   triangular entry, with twice the points because Gram blocks become two frames; MR_AHA batches
   the entries). The first, cold creation in Julia additionally includes compilation (≈ 1.7 s for
   `2d`), which `--setup-reps 3` excludes from the median.
@@ -133,23 +134,25 @@ Observations:
 
 ### L40S and H100
 
-Same settings, one GPU, on the HPC with `hpc/bench_julia.sbatch` (MR_AHA 711003d built for sm_89 /
-sm_90, Julia 1.11.7, CUDA.jl 6.5.1 with its own CUDA 13.4 runtime). A^H A in ms (set-up in s):
+Same settings, one GPU, on the HPC with `hpc/bench_julia.sbatch` (MR_AHA `c60db28` built for sm_89 /
+sm_90, Julia 1.11.7, CUDA.jl 6.5.1 with its own CUDA 13.4 runtime), both libraries in the same
+job on the same node. A^H A in ms (set-up in s):
 
 | Preset | L40S Julia | L40S MR_AHA masked | L40S MR_AHA toeplitz | H100 Julia | H100 MR_AHA masked | H100 MR_AHA toeplitz |
 |---|---:|---:|---:|---:|---:|---:|
-| `2d` | 0.82 (0.02) | **0.43** (0.21) | 0.43 | 0.89 (0.02) | **0.54** (0.21) | 0.53 |
-| `2d72` | 362 (4.07) | **288** (2.31) | 309 | **76** (4.65) | 165 (2.11) | 335 |
-| `stack` | fails (2-3-5) | **744** (2.59) | 752 | fails (2-3-5) | **170** (1.84) | 178 |
-| `stack`, Nz = 32 | 1140 (19.3) | **412** (1.64) | 417 | 272 (5.26) | **96** (1.05) | 100 |
-| `3d` | 1348 (21.4) | **1016** (7.34) | 1063 | 317 (6.15) | **231** (4.75) | 252 |
+| `2d` | 0.82 (0.02) | **0.43** (0.28) | 0.43 | 0.88 (0.02) | **0.54** (0.21) | 0.53 |
+| `2d72` | 362 (4.10) | **86** (2.31) | 90 | 76 (4.66) | **33** (2.02) | 36 |
+| `stack` | fails (2-3-5) | **744** (2.48) | 752 | fails (2-3-5) | **170** (1.75) | 178 |
+| `stack`, Nz = 32 | 1142 (19.38) | **412** (1.67) | 417 | 272 (5.27) | **96** (1.07) | 100 |
+| `3d` | 1347 (21.44) | **1016** (7.37) | 1064 | 317 (6.15) | **232** (4.78) | 252 |
 
-* Apart from `2d72` on the H100, the package is 1.3-1.9x slower than MR_AHA's masked operator
-  (2.8x on the stack, which it treats as 3D) and its set-up 1.3-12x slower.
-* `2d72` (L = 72) on the H100 is the exception: the package is 2.2x faster. MR_AHA's Toeplitz
-  operator barely gains from the L40S to the H100 on this problem (and is slower than its own NUFFT
-  there, 199 ms), while every other problem gains 3-4x; its large-L block multiply on sm_90 needs a
-  look.
+* The package is 1.3-4.2x slower than MR_AHA's masked operator on the 2D and 3D presets (2.8x
+  on the stack, which it treats as 3D). Its set-up is 1.3-12x slower, except on the small `2d`
+  preset, where MR_AHA's set-up takes 0.2-0.3 s against 0.02 s.
+* `2d72` (L = 72): MR_AHA is 4.2x faster on the L40S and 2.3x faster on the H100. This is the
+  effect of the tiled block-diagonal kernels for ranks above 30 in MR_AHA `c60db28`. With the
+  generic kernels before them (`711003d`) the masked operator took 288 ms on the L40S and 165 ms
+  on the H100, and the package was 2.2x faster on the H100.
 * Correctness (`check_mr_aha.py`) is the same as on the TITAN RTX on both GPUs: 1.9e-3 / 3.4e-3 /
   4.6e-3 against MR_AHA's NUFFT, scalar 0.99999.
 
