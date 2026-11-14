@@ -6,7 +6,10 @@ next to MR_AHA's on the same problems, GPU and process.
 
 ## What BART implements
 
-Checked in the pinned source (`bart/bart`, tag **v1.0.01**):
+Checked in the pinned source (`bart/bart`, tag **v1.0.01**). The submodule is the fork
+[mikecjz/bart](https://github.com/mikecjz/bart), branch `v1.0.01-container`: BART v1.0.01 with
+unchanged C sources, plus a `Dockerfile` and wrappers (`bart.py`, `bart.m`) that can run BART
+from a container image.
 
 | Question | Answer | Where |
 |---|---|---|
@@ -34,10 +37,18 @@ How it differs from MR_AHA's Toeplitz operator:
   (`--check` shows ~0.5 relative error for `bart_toep_triag*`), with a real basis (the usual BART
   case) it agrees to ~1e-5. Timing is unaffected.
 
-## Build BART with CUDA
+## Get BART: native build or container image
+
+`bench_bart.py` can run BART in two ways. Both need the submodule's sources (`cfl.py` and
+`bart.py` are used from it):
 
 ```bash
 git submodule update --init bart/bart
+```
+
+### Native build (workstation)
+
+```bash
 bart/build_bart.sh            # GPU archs "75 80 86 89 90"; or e.g.  bart/build_bart.sh "75"
 ```
 
@@ -46,6 +57,27 @@ The script builds `bart/bart/bart` with `CUDA=1 OPENBLAS=1 OMP=1` and the timing
 libopenblas-dev libpng-dev`, a CUDA toolkit, and **GCC ≥ 12** (BART refuses older ones; the
 script picks the newest `gcc-NN` on `PATH`, or set `CC`). `CUDA_BASE` overrides the toolkit found
 from `nvcc`.
+
+### Container image (HPC cluster)
+
+Where GCC 12 is missing, BART runs from an Apptainer / Singularity image instead. The image is
+[`mikecjz/bart`](https://hub.docker.com/r/mikecjz/bart) on Docker Hub, built from the
+`Dockerfile` of the submodule (BART v1.0.01, CUDA 12.6, the same build options as above).
+
+```bash
+module load apptainer                       # or singularity
+bart/build_bart.sh --sif                    # image -> bart/bart.sif, helper -> bart/bart_aha_sif
+bart/build_bart.sh --sif /path/bart.sif     # the same with an image somewhere else
+```
+
+The script downloads the image (`docker://mikecjz/bart:v1.0.01-devel`, 3.9 GB; `BART_IMAGE`
+names another one) unless the file exists, and compiles the timing helper inside it against
+BART's libraries in `/opt/bart`. No root rights are needed. The `devel` image is required because
+of the helper; the smaller `mikecjz/bart:v1.0.01` holds only the `bart` binary.
+
+The SIF file is itself a `bart` executable (`bart/bart.sif version`, and
+`APPTAINER_NV=1 bart/bart.sif pics -g ...` on a GPU), and BART's Python and MATLAB wrappers use
+it when `BART_SIF` names it (`doc/docker.md` in the submodule).
 
 ## Run
 
@@ -57,6 +89,26 @@ python bart/bench_bart.py                                   # preset 2d
 python bart/bench_bart.py --problem 2d 2d72 stack 3d --check
 python bart/bench_bart.py --problem stack --methods bart_toep_triag_lowmem mr_aha_toeplitz
 python bart/bench_bart.py --problem 2d --methods bart_pics_cg mr_aha_toeplitz --cg 20
+```
+
+With a container image, add `--sif` (or set `BART_SIF`):
+
+```bash
+python bart/bench_bart.py --sif bart/bart.sif --problem 2d --check
+```
+
+`bart_aha_sif` and `bart pics` (through `bart.py`) then run inside the container with `--nv`;
+MR_AHA runs natively in the Python process. The operator times are taken inside `bart_aha` and
+do not contain the start of the container. The end-to-end time of `bart_pics_cg` does: a few
+tenths of a second per `pics` call.
+
+On a Slurm cluster, [`hpc/bench_bart.sbatch`](hpc/bench_bart.sbatch) does everything in one job
+(MR_AHA for the GPU, the image, the helper, all problems):
+
+```bash
+mkdir -p bart/hpc/logs
+sbatch --gres=gpu:l40s:1 --export=ALL,ARCH=89 bart/hpc/bench_bart.sbatch
+sbatch --gres=gpu:h100:1 --export=ALL,ARCH=90 bart/hpc/bench_bart.sbatch
 ```
 
 One GPU: the first of `CUDA_VISIBLE_DEVICES`. Results are printed and written to
@@ -81,7 +133,7 @@ official Python interface: one CG iteration costs one $A^H A$ plus a few vector 
 
 Options: `--problem`, `--n`, `--L`, `--coils`, `--spokes`, `--samples`, `--data`, `--methods`,
 `--reps` (10), `--warmup` (2), `--pics-iters K1 K2` (5 55), `--cg N`, `--pics-reps` (3), `--check`, `--tmpdir` (where the
-`.cfl` files go; the 3D presets need a few GB), `--out`. `--help` lists them.
+`.cfl` files go; the 3D presets need a few GB), `--sif`, `--out`. `--help` lists them.
 
 ## Results
 
@@ -131,7 +183,10 @@ The JSON files are under `results/titan_rtx/bench_bart_*` (not tracked, like all
 
 ## Files
 
-* `build_bart.sh`: builds BART with CUDA and `bart_aha`.
+* `build_bart.sh`: builds BART with CUDA and `bart_aha`; with `--sif`, gets the container image
+  and builds `bart_aha_sif` inside it.
+* `hpc/bench_bart.sbatch`: Slurm job that runs the benchmark with the container image.
 * `bart_aha.c`: the timing helper.
 * `bench_bart.py`: the benchmark.
-* `bart/`: BART, pinned submodule (v1.0.01, BSD-3-Clause).
+* `bart/`: BART, pinned submodule ([mikecjz/bart](https://github.com/mikecjz/bart), v1.0.01
+  plus the container files; BSD-3-Clause).

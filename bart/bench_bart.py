@@ -101,11 +101,28 @@ Examples
     python bart/bench_bart.py --problem 3d --methods bart_toep_triag_lowmem mr_aha_toeplitz
     python bart/bench_bart.py --problem 2d --methods bart_pics_cg mr_aha_toeplitz --cg 20
 
-Requirements: BART built by ``bart/build_bart.sh`` (``bart/bart/bart`` and
-``bart/bart_aha``), and the MR_AHA Python interface with CuPy (as for
-``python/bench_aha.py``; ``MR_AHA_ROOT`` selects the checkout). One GPU: the
-first of ``CUDA_VISIBLE_DEVICES``. Results are printed and written to
-``results/<gpu>/bench_bart_<time>.json``.
+Two ways to run BART
+--------------------
+Native (default)
+    BART compiled on this machine by ``bart/build_bart.sh``
+    (``bart/bart/bart`` and ``bart/bart_aha``). Needs GCC 12 or newer.
+Container (``--sif FILE``, or the environment variable ``BART_SIF``)
+    BART from an Apptainer / Singularity image, for machines where it cannot
+    be built (HPC clusters). ``bart/build_bart.sh --sif`` downloads the image
+    (``mikecjz/bart:v1.0.01-devel`` on Docker Hub, built from the Dockerfile
+    of the submodule) and compiles the helper inside it
+    (``bart/bart_aha_sif``). ``bart_aha_sif`` and, through ``bart.py``,
+    ``bart pics`` then run inside the container with ``--nv``. MR_AHA always
+    runs natively, in this process. The operator times are measured inside
+    ``bart_aha`` and do not include the start of the container; the
+    end-to-end time of ``bart_pics_cg`` does (a few tenths of a second per
+    call).
+
+Requirements: BART as above, and the MR_AHA Python interface with CuPy (as
+for ``python/bench_aha.py``; ``MR_AHA_ROOT`` selects the checkout). The
+submodule ``bart/bart`` must be checked out in both cases (``cfl.py`` and
+``bart.py`` are used from it). One GPU: the first of ``CUDA_VISIBLE_DEVICES``.
+Results are printed and written to ``results/<gpu>/bench_bart_<time>.json``.
 """
 
 from __future__ import annotations
@@ -116,6 +133,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -127,7 +145,15 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 BART_DIR = HERE / "bart"
+#: The timing helper of the native build.
 BART_AHA = HERE / "bart_aha"
+#: The timing helper compiled inside the container image (``build_bart.sh --sif``).
+BART_AHA_SIF = HERE / "bart_aha_sif"
+
+#: Container image BART runs from (:func:`use_sif`); ``None`` = native build.
+SIF = None
+#: The container program (``apptainer`` or ``singularity``) when :data:`SIF` is set.
+SIF_RUNTIME = None
 
 sys.path.insert(0, str(REPO / "python"))
 sys.path.insert(0, str(BART_DIR / "python"))
@@ -252,6 +278,60 @@ def from_bart_image(y: np.ndarray, prob: dict) -> np.ndarray:
 # BART runs
 # --------------------------------------------------------------------------
 
+def use_sif(sif: str) -> None:
+    """Run BART from a container image instead of the native build.
+
+    Sets :data:`SIF` and :data:`SIF_RUNTIME`, and the environment variable
+    ``BART_SIF``, which makes BART's ``bart.py`` (of the submodule
+    ``bart/bart``) run its tools in the same image.
+
+    Args:
+        sif: Path of the Apptainer / Singularity image (``.sif``).
+
+    Raises:
+        SystemExit: If the image or the container program is missing.
+    """
+    global SIF, SIF_RUNTIME  # noqa: PLW0603
+
+    path = Path(sif).expanduser().resolve()
+    if not path.is_file():
+        raise SystemExit(f"{path} is missing: run bart/build_bart.sh --sif {sif}")
+    rt = (os.environ.get("BART_SIF_RUNTIME") or shutil.which("apptainer")
+          or shutil.which("singularity"))
+    if not rt:
+        raise SystemExit("neither apptainer nor singularity found "
+                         "(HPC: module load apptainer), or set BART_SIF_RUNTIME")
+    SIF, SIF_RUNTIME = path, rt
+    os.environ["BART_SIF"] = str(path)
+    os.environ.setdefault("BART_SIF_NV", "1")
+
+
+def bart_command(exe, binds=()) -> list:
+    """Command prefix that runs a BART program natively or in the container.
+
+    Args:
+        exe: ``"bart"`` or the path of the timing helper.
+        binds: Folders the program reads or writes; they are bound into the
+            container (the home and working directories and ``/tmp`` are
+            visible there anyway).
+
+    Returns:
+        ``[exe]`` for the native build (``"bart"`` -> ``bart/bart/bart``);
+        with a container image ``[runtime, "run" | "exec", "--nv", "--bind",
+        ..., image, (exe)]``: ``bart`` is the image's entry point, any other
+        program is started with ``exec``.
+    """
+    if SIF is None:
+        return [str(BART_DIR / "bart") if exe == "bart" else str(exe)]
+    cmd = [SIF_RUNTIME, "run" if exe == "bart" else "exec", "--nv"]
+    for folder in dict.fromkeys(str(b) for b in binds if b):
+        cmd += ["--bind", folder]
+    cmd.append(str(SIF))
+    if exe != "bart":
+        cmd.append(str(exe))
+    return cmd
+
+
 def write_inputs(b: dict, folder: Path) -> dict:
     """Write the BART arrays as ``.cfl``/``.hdr`` files with BART's ``cfl.py``.
 
@@ -281,7 +361,9 @@ def run_bart_op(method: str, files: dict, args, out_stem=None) -> dict:
         The JSON of ``bart_aha`` (``setup_s``, ``apply_ms``, ``mem_gb``) or
         ``{"error": ...}``.
     """
-    cmd = [str(BART_AHA), "-g", *BART_FLAGS[method],
+    helper = BART_AHA if SIF is None else BART_AHA_SIF
+    folder = Path(files["traj"]).parent          # the .cfl files (--tmpdir)
+    cmd = [*bart_command(helper, binds=[HERE, folder]), "-g", *BART_FLAGS[method],
            "--reps", str(args.reps), "--warmup", str(args.warmup)]
     if out_stem:
         cmd += ["--out", out_stem]
@@ -494,9 +576,9 @@ def gpu_name() -> str:
 
 
 def bart_version() -> str:
-    """Output of ``bart version`` (the pinned submodule)."""
+    """Output of ``bart version`` (the native build or the container image)."""
     try:
-        return subprocess.run([str(BART_DIR / "bart"), "version"],
+        return subprocess.run([*bart_command("bart"), "version"],
                               capture_output=True, text=True,
                               check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
@@ -603,6 +685,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="compare every A^H A x with MR_AHA's Toeplitz result")
     p.add_argument("--timeout", type=float, default=3600, help="per BART run, s")
     p.add_argument("--tmpdir", help="folder for the .cfl files (default: system temp)")
+    p.add_argument("--sif", default=os.environ.get("BART_SIF"), metavar="FILE",
+                   help="run BART from this Apptainer / Singularity image instead "
+                        "of the native build (default: $BART_SIF; see "
+                        "bart/build_bart.sh --sif)")
     p.add_argument("--out", help="JSON output file")
     a = p.parse_args(argv)
     if a.check and "mr_aha_toeplitz" not in a.methods:
@@ -613,11 +699,21 @@ def parse_args(argv=None) -> argparse.Namespace:
 def main(argv=None) -> int:
     """Entry point."""
     args = parse_args(argv)
-    for exe in (BART_DIR / "bart", BART_AHA):
-        if not exe.exists():
-            raise SystemExit(f"{exe} is missing: run bart/build_bart.sh first")
+    if not (BART_DIR / "python" / "bart.py").exists():
+        raise SystemExit("bart/bart is empty: git submodule update --init bart/bart")
+    if args.sif:
+        use_sif(args.sif)
+        if not BART_AHA_SIF.exists():
+            raise SystemExit(f"{BART_AHA_SIF} is missing: run "
+                             f"bart/build_bart.sh --sif {args.sif}")
+        how = f"container {SIF.name}"
+    else:
+        for exe in (BART_DIR / "bart", BART_AHA):
+            if not exe.exists():
+                raise SystemExit(f"{exe} is missing: run bart/build_bart.sh first")
+        how = "native build"
     gpu = gpu_name()
-    print(f"GPU: {gpu}   BART {bart_version()}")
+    print(f"GPU: {gpu}   BART {bart_version()} ({how})")
     if args.data:
         probs = [(Path(args.data).name,
                   problems.load(args.data, args.traj_type, args.seed))]
@@ -636,7 +732,7 @@ def main(argv=None) -> int:
         REPO / "results" / ba.gpu_folder(gpu)
         / time.strftime("bench_bart_%Y%m%d_%H%M%S.json"))
     out.parent.mkdir(parents=True, exist_ok=True)
-    meta = dict(gpu=gpu, bart=bart_version(), argv=sys.argv[1:],
+    meta = dict(gpu=gpu, bart=bart_version(), bart_run=how, argv=sys.argv[1:],
                 reps=args.reps, warmup=args.warmup)
     out.write_text(json.dumps(dict(meta=meta, results=results), indent=1))
     print(f"\nwrote {out}")

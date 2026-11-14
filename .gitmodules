@@ -4,8 +4,9 @@
 	branch = main
 [submodule "bart/bart"]
 	path = bart/bart
-	url = https://codeberg.org/mrirecon/bart.git
+	url = https://github.com/mikecjz/bart.git
 	ignore = untracked
+	branch = v1.0.01-container
 [submodule "julia/MRISubspaceRecon.jl"]
 	path = julia/MRISubspaceRecon.jl
 	url = https://github.com/MagneticResonanceImaging/MRISubspaceRecon.jl
