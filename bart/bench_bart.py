@@ -118,6 +118,21 @@ Container (``--sif FILE``, or the environment variable ``BART_SIF``)
     end-to-end time of ``bart_pics_cg`` does (a few tenths of a second per
     call).
 
+Out of memory
+-------------
+A BART method that cannot allocate GPU memory is reported as
+``GPU out of memory`` together with the evidence that the limit is the GPU the
+run is on: the size of the allocation BART failed on (from its own message),
+the total memory of that GPU and the memory other processes (this script's
+MR_AHA context among them) held when BART started.
+
+``--fit`` adapts the problems to the GPU instead of giving up: a preset that
+BART cannot fit even in its most frugal mode (upper-triangular PSF, low-memory
+mode) is shrunk step by step along :data:`FIT_LADDER` until it does, and all
+methods then run on that problem. The steps that failed are kept in the
+result (``fit``). So the reduced problems are the largest of the ladder for
+the GPU at hand, not sizes chosen for another one.
+
 Requirements: BART as above, and the MR_AHA Python interface with CuPy (as
 for ``python/bench_aha.py``; ``MR_AHA_ROOT`` selects the checkout). The
 submodule ``bart/bart`` must be checked out in both cases (``cfl.py`` and
@@ -172,6 +187,23 @@ METHODS = ("bart_toep", "bart_toep_triag", "bart_toep_triag_lowmem",
 #: Default methods.
 DEFAULT_METHODS = ("bart_toep", "bart_toep_triag", "bart_toep_triag_lowmem",
                    "bart_pics", "mr_aha_toeplitz")
+
+#: BART's most frugal operator, the one ``--fit`` probes with.
+FIT_METHOD = "bart_toep_triag_lowmem"
+
+#: ``--fit``: the sizes a preset is shrunk through, largest first, until BART
+#: fits the GPU. Each entry holds arguments of :func:`problems.override`; the
+#: preset itself is tried before the first entry. The stack loses slices
+#: first and in-plane matrix after that; the kooshball keeps its spokes per
+#: matrix area (0.6125 n^2); the high-rank 2D problem loses ranks.
+FIT_LADDER = {
+    "2d72": [dict(L=L) for L in (64, 56, 48, 40, 32, 24)],
+    "stack": ([dict(n_dim=(320, 320, nz)) for nz in (52, 48, 44, 40, 36, 32, 28)]
+              + [dict(n_dim=(256, 256, 28), spokes=224, samples=256),
+                 dict(n_dim=(160, 160, 28), spokes=140, samples=160)]),
+    "3d": [dict(n_dim=(n, n, n), spokes=round(0.6125 * n * n), samples=n)
+           for n in (152, 144, 136, 128, 120, 112, 104, 96)],
+}
 
 #: Options of ``bart_aha`` for every BART operator method.
 BART_FLAGS = {
@@ -278,6 +310,64 @@ def from_bart_image(y: np.ndarray, prob: dict) -> np.ndarray:
 # BART runs
 # --------------------------------------------------------------------------
 
+def gpu_memory():
+    """Memory of the first visible GPU from ``nvidia-smi``.
+
+    Returns:
+        ``(used, total)`` in GiB, or ``(None, None)`` if it cannot be read.
+    """
+    try:
+        vis = os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")[0] or "0"
+        out = subprocess.run(["nvidia-smi", "-i", vis,
+                              "--query-gpu=memory.used,memory.total",
+                              "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, check=True).stdout
+        used, total = (float(v) / 1024 for v in out.strip().splitlines()[0].split(","))
+        return used, total
+    except (OSError, subprocess.CalledProcessError, IndexError, ValueError):
+        return None, None
+
+
+def oom_error(msg: str, used_before):
+    """Recognise BART's GPU out-of-memory failure and document it.
+
+    BART prints ``Trying to allocate N GB failed.`` and a hint about
+    ``BART_GPU_GLOBAL_MEMORY`` when ``cudaMalloc`` fails (``src/num/gpuops.c``).
+
+    Args:
+        msg: Output of the failed BART program (colour codes removed).
+        used_before: GPU memory in use before BART started, GiB (or ``None``).
+
+    Returns:
+        ``None`` if ``msg`` is not an out-of-memory failure, else a ``dict``
+        with ``error`` (starts with ``"GPU out of memory"``) and ``oom``:
+        ``alloc_gb`` (the allocation that failed, whole GiB as BART prints
+        it; not the total BART needs), ``gpu_total_gb`` and
+        ``gpu_used_before_gb``.
+    """
+    if "BART_GPU_GLOBAL_MEMORY" not in msg and "out of memory" not in msg.lower():
+        return None
+    m = re.search(r"Trying to allocate (\d+) GB failed", msg)
+    alloc = int(m.group(1)) if m else None
+    _, total = gpu_memory()
+    text = "GPU out of memory"
+    if total is not None:
+        text += f" on this {total:.0f} GB GPU"
+    if alloc is not None:
+        text += f" (a {alloc} GB allocation failed" if alloc else " (an allocation under 1 GB failed"
+        if used_before is not None:
+            text += f"; {used_before:.1f} GB held by other processes"
+        text += ")"
+    return dict(error=text, oom=dict(alloc_gb=alloc, gpu_total_gb=total,
+                                     gpu_used_before_gb=used_before))
+
+
+def is_oom(row_or_text) -> bool:
+    """Whether a result row (or an error text) is a GPU out-of-memory failure."""
+    text = row_or_text.get("error", "") if isinstance(row_or_text, dict) else (row_or_text or "")
+    return text.startswith("GPU out of memory")
+
+
 def use_sif(sif: str) -> None:
     """Run BART from a container image instead of the native build.
 
@@ -368,6 +458,7 @@ def run_bart_op(method: str, files: dict, args, out_stem=None) -> dict:
     if out_stem:
         cmd += ["--out", out_stem]
     cmd += [files[k] for k in ("traj", "basis", "maps", "x")]
+    used_before, _ = gpu_memory()
     try:
         p = subprocess.run(cmd, capture_output=True, text=True,
                            timeout=args.timeout)
@@ -375,8 +466,9 @@ def run_bart_op(method: str, files: dict, args, out_stem=None) -> dict:
         return dict(error=f"timeout after {args.timeout} s")
     if p.returncode != 0:
         msg = ANSI.sub("", p.stderr or p.stdout)
-        if "BART_GPU_GLOBAL_MEMORY" in msg or "out of memory" in msg.lower():
-            return dict(error="GPU out of memory")
+        oom = oom_error(msg, used_before)
+        if oom:
+            return oom
         tail = msg.strip().splitlines()[-3:]
         return dict(error=f"exit {p.returncode}: " + " | ".join(tail))
     return json.loads(p.stdout.strip().splitlines()[-1])
@@ -402,10 +494,17 @@ def run_bart_pics(b: dict, prob: dict, args) -> dict:
     k1, k2 = args.pics_iters
     times = []
     for K in (k1, k2):
-        t, err = _pics(b, ksp, K, "-U --nufft-conf upper-triag-psf")
-        if err is not None:
-            return dict(error=err)
-        times.append(t)
+        # Short calls are repeated (fastest kept): the start of the process
+        # (and of the container) varies by more than a few fast iterations take.
+        best = None
+        for _ in range(max(args.pics_reps, 1)):
+            t, err = _pics(b, ksp, K, "-U --nufft-conf upper-triag-psf")
+            if err is not None:
+                return err if isinstance(err, dict) else dict(error=err)
+            best = t if best is None else min(best, t)
+            if t > 5.0:
+                break
+        times.append(best)
     return dict(iter_ms=1e3 * (times[1] - times[0]) / (k2 - k1),
                 t1_s=times[0], t2_s=times[1], k1=k1, k2=k2)
 
@@ -430,20 +529,22 @@ def _pics(b: dict, ksp: np.ndarray, iters: int, flags: str):
         flags: Extra ``pics`` options.
 
     Returns:
-        ``(seconds, None)`` or ``(None, error message)``; an out-of-memory
-        failure is reported as ``"GPU out of memory"``.
+        ``(seconds, None)`` or ``(None, error)``; ``error`` is a message, or
+        for an out-of-memory failure the ``dict`` of :func:`oom_error`.
     """
     import bart as bartpy  # noqa: PLC0415  (bart/bart/python/bart.py)
 
     cmd = f"pics -g --gpu-gridding -l2 -r 0.001 -i {iters} {flags}".strip()
+    used_before, _ = gpu_memory()
     t0 = time.perf_counter()
     with contextlib.redirect_stdout(io.StringIO()):   # bart.py echoes the tool's output
         out = bartpy.bart(1, cmd, ksp, b["maps"], t=b["traj"], B=b["basis"])
     t = time.perf_counter() - t0
     if bartpy.bart.ERR or out is None:
-        msg = ANSI.sub("", bartpy.bart.stderr or "")
-        if "BART_GPU_GLOBAL_MEMORY" in msg or "out of memory" in msg.lower():
-            return None, "GPU out of memory"
+        msg = ANSI.sub("", (bartpy.bart.stderr or "") + (bartpy.bart.stdout or ""))
+        oom = oom_error(msg, used_before)
+        if oom:
+            return None, oom
         return None, "bart pics failed: " + " | ".join(msg.strip().splitlines()[-3:])
     return t, None
 
@@ -455,18 +556,22 @@ def run_bart_pics_cg(b: dict, prob: dict, args) -> dict:
     each ``--pics-reps`` times (fastest kept); the difference is the time of
     ``N`` iterations, free of process start, file
     I/O, PSF computation and the initial adjoint. BART's default (full PSF)
-    is tried first and low-memory mode (``-U``) if it runs out of GPU memory.
+    is tried first, then low-memory mode (``-U``), then low-memory mode with
+    the upper-triangular PSF (BART's most frugal mode), each only if the one
+    before runs out of GPU memory.
 
     Returns:
         ``dict`` with ``cg_s``, ``total_s`` (estimated wall-clock time of a
         whole ``pics`` call with ``N`` iterations), ``cg_iters``, ``mode``
-        (``"full PSF"`` or ``"lowmem"``), ``t1_s``, ``t2_s``, or
-        ``{"error": ...}``.
+        (``"full PSF"``, ``"lowmem"`` or ``"upper-triag lowmem"``), ``t1_s``,
+        ``t2_s``, or ``{"error": ...}`` (for out of memory: of the last mode,
+        with ``oom``).
     """
     n = args.cg or 20
     ksp = _random_kspace(b)
     err = None
-    for mode, flags in (("full PSF", ""), ("lowmem", "-U")):
+    for mode, flags in (("full PSF", ""), ("lowmem", "-U"),
+                        ("upper-triag lowmem", "-U --nufft-conf upper-triag-psf")):
         ts = {}
         for k in (1, n + 1):
             for _ in range(args.pics_reps):
@@ -481,9 +586,9 @@ def run_bart_pics_cg(b: dict, prob: dict, args) -> dict:
             cg = t2 - t1
             return dict(cg_s=cg, total_s=t2 - cg / n, cg_iters=n, mode=mode,
                         t1_s=t1, t2_s=t2)
-        if err != "GPU out of memory":
+        if not is_oom(err):
             break
-    return dict(error=err)
+    return err if isinstance(err, dict) else dict(error=err)
 
 
 # --------------------------------------------------------------------------
@@ -589,7 +694,7 @@ def fmt(row: dict) -> str:
     """One line of the report table."""
     name = row["method"]
     if "error" in row:
-        return f"  {name:<24s} FAILED: {row['error'][:110]}"
+        return f"  {name:<24s} FAILED: {row['error'][:140]}"
     if name == "bart_pics":
         return (f"  {name:<24s} {'':>9s} {row['iter_ms']:10.2f}   "
                 f"(per CG iteration; {row['k1']}/{row['k2']} it: "
@@ -655,6 +760,50 @@ def run_problem(name: str, prob: dict, methods, args) -> dict:
                 n_coils=prob["n_coils"], frames=b["frames"], rows=rows)
 
 
+def fit_preset(name: str, preset, args):
+    """Shrink a preset until BART fits it on the GPU of this run (``--fit``).
+
+    The preset and then the steps of :data:`FIT_LADDER` are tried in turn with
+    BART's most frugal operator (:data:`FIT_METHOD`: upper-triangular PSF,
+    low-memory mode; one warm-up and one timed application). The first size
+    that does not run out of GPU memory is used.
+
+    Args:
+        name: Preset name (key of :data:`FIT_LADDER`).
+        preset: The :class:`problems.Preset` to start from.
+        args: Parsed command line (``seed``, ``tmpdir``, ``timeout``).
+
+    Returns:
+        ``(prob, fit)``: the problem ``dict`` of the size that fits (of the
+        last step if none does), and ``fit`` with ``method``, ``fits``,
+        ``shrunk``, the chosen ``size`` and ``tried``, the list of the sizes
+        that failed with their error and out-of-memory evidence.
+    """
+    probe = argparse.Namespace(reps=1, warmup=1, timeout=args.timeout)
+    tried, prob, size, fits = [], None, None, False
+    for step in [dict()] + FIT_LADDER.get(name, []):
+        pr = problems.override(preset, **step) if step else preset
+        prob = problems.synthetic(pr, args.seed)
+        size = dict(n_dim=list(pr.n_dim), L=pr.L, spokes=pr.spokes,
+                    samples=pr.samples)
+        with tempfile.TemporaryDirectory(prefix="bench_bart_fit_",
+                                         dir=args.tmpdir) as tmp:
+            files = write_inputs(to_bart(prob), Path(tmp))
+            row = run_bart_op(FIT_METHOD, files, probe)
+        if "error" not in row:
+            fits = True
+            print(f"   --fit {name}: {prob['desc']} fits "
+                  f"({row['mem_gb']:.1f} GB with {FIT_METHOD})", flush=True)
+            break
+        tried.append({**size, "error": row["error"], "oom": row.get("oom")})
+        print(f"   --fit {name}: {prob['desc']} does not fit: {row['error']}",
+              flush=True)
+        if not is_oom(row):
+            break
+    return prob, dict(method=FIT_METHOD, fits=fits, shrunk=bool(tried),
+                      size=size, tried=tried)
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     """Command line; see the module docstring."""
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0],
@@ -681,6 +830,10 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="CG iterations: time N iterations with MR_AHA's operators "
                         "(and bart_pics_cg; 20 if not given)")
     p.add_argument("--eps", type=float, default=1e-6, help="MR_AHA NUFFT tolerance")
+    p.add_argument("--fit", action="store_true",
+                   help="shrink every preset that BART cannot fit on this GPU "
+                        "(upper-triangular PSF, low-memory mode) step by step "
+                        "until it fits, and run all methods on that problem")
     p.add_argument("--check", action="store_true",
                    help="compare every A^H A x with MR_AHA's Toeplitz result")
     p.add_argument("--timeout", type=float, default=3600, help="per BART run, s")
@@ -722,8 +875,21 @@ def main(argv=None) -> int:
         for name in args.problem:
             pr = problems.override(problems.PRESETS[name], args.n, args.L,
                                    args.coils, args.spokes, args.samples)
-            probs.append((name, problems.synthetic(pr, args.seed)))
-    results = [run_problem(n, pr, args.methods, args) for n, pr in probs]
+            probs.append((name, pr))
+    results = []
+    for name, pr in probs:
+        fit = None
+        if args.data:
+            prob = pr
+        elif args.fit:
+            prob, fit = fit_preset(name, pr, args)
+        else:
+            prob = problems.synthetic(pr, args.seed)
+        res = run_problem(name, prob, args.methods, args)
+        if fit is not None:
+            res["fit"] = fit
+        results.append(res)
+        del prob
 
     sys.path.insert(0, str(REPO / "python"))
     import bench_aha as ba  # noqa: PLC0415
@@ -732,7 +898,8 @@ def main(argv=None) -> int:
         REPO / "results" / ba.gpu_folder(gpu)
         / time.strftime("bench_bart_%Y%m%d_%H%M%S.json"))
     out.parent.mkdir(parents=True, exist_ok=True)
-    meta = dict(gpu=gpu, bart=bart_version(), bart_run=how, argv=sys.argv[1:],
+    meta = dict(gpu=gpu, gpu_total_gb=gpu_memory()[1], bart=bart_version(),
+                bart_run=how, argv=sys.argv[1:],
                 reps=args.reps, warmup=args.warmup)
     out.write_text(json.dumps(dict(meta=meta, results=results), indent=1))
     print(f"\nwrote {out}")

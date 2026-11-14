@@ -102,8 +102,27 @@ MR_AHA runs natively in the Python process. The operator times are taken inside 
 do not contain the start of the container. The end-to-end time of `bart_pics_cg` does: a few
 tenths of a second per `pics` call.
 
+### Out of memory, and problems that fit the GPU
+
+A BART method that cannot allocate GPU memory is reported as `GPU out of memory` with the
+evidence that the limit is the GPU of that run: the allocation BART failed on (from its own
+message), the memory of the GPU, and what other processes held when BART started. The numbers
+are also in the JSON (`oom`).
+
+`--fit` adapts a preset to the GPU instead: if BART cannot fit it even in its most frugal mode
+(upper-triangular PSF, low-memory mode), the preset is shrunk step by step until it does, and
+all methods run on that problem. The stack loses slices first (56, 52, ... 28) and in-plane
+matrix after that, the kooshball shrinks from 160³ in steps of 8 with its spokes per matrix
+area kept, and `2d72` loses ranks (72, 64, ... 24). The reduced problem is therefore the
+largest of these that the GPU at hand holds; the sizes that failed are kept in the JSON (`fit`).
+
+```bash
+python bart/bench_bart.py --problem 2d72 stack 3d --fit --check
+```
+
 On a Slurm cluster, [`hpc/bench_bart.sbatch`](hpc/bench_bart.sbatch) does everything in one job
-(MR_AHA for the GPU, the image, the helper, all problems):
+(MR_AHA for the GPU, the image, the helper, and four sets of runs: the problems that fit a
+24 GB GPU, the presets as they are, the presets fitted to the GPU, and 20 CG iterations):
 
 ```bash
 mkdir -p bart/hpc/logs
@@ -121,7 +140,7 @@ One GPU: the first of `CUDA_VISIBLE_DEVICES`. Results are printed and written to
 | `bart_toep_triag_lowmem` | the same in BART's `lowmem` mode (one of the $2^d$ PSF factors at a time) |
 | `bart_nufft` | no Toeplitz: BART's gridding NUFFT forward + adjoint with the basis |
 | `bart_pics` | through `bart.py`: time per CG iteration of `bart pics -g --gpu-gridding -U --nufft-conf upper-triag-psf` (the operator of `bart_toep_triag_lowmem`), from runs with 5 and 55 iterations (process start, file I/O and PSF cancel) |
-| `bart_pics_cg` | through `bart.py`: `--cg N` (default 20) CG iterations of `bart pics -g --gpu-gridding` with BART's default full PSF, or `-U` (lowmem) if that runs out of memory. Runs with 1 and N+1 iterations, fastest of `--pics-reps` (3) each; `cg_s` is the difference, `total_s` the whole `pics` call with N iterations (process start, `.cfl` I/O, PSF, scaling, adjoint, CG). BART's CG has no stopping tolerance by default, so every run does all its iterations |
+| `bart_pics_cg` | through `bart.py`: `--cg N` (default 20) CG iterations of `bart pics -g --gpu-gridding` with BART's default full PSF, or `-U` (lowmem) if that runs out of memory, or `-U` with the upper-triangular PSF if that does too. Runs with 1 and N+1 iterations, fastest of `--pics-reps` (3) each; `cg_s` is the difference, `total_s` the whole `pics` call with N iterations (process start, `.cfl` I/O, PSF, scaling, adjoint, CG). BART's CG has no stopping tolerance by default, so every run does all its iterations |
 | `mr_aha_toeplitz`, `mr_aha_nufft` | MR_AHA's operators (`mr_aha.create_op`) for reference; with `--cg N` also N plain CG iterations (`bench_aha.cg_time`, after one untimed iteration) and `total_s` = inputs to the GPU + operator creation + CG |
 
 The `bart_*` operator rows are timed by `bart_aha` (`bart_aha.c`), a ~200-line C program linked
@@ -132,7 +151,7 @@ around each call. This is needed because BART's tools have no "apply $A^H A$" co
 official Python interface: one CG iteration costs one $A^H A$ plus a few vector operations.
 
 Options: `--problem`, `--n`, `--L`, `--coils`, `--spokes`, `--samples`, `--data`, `--methods`,
-`--reps` (10), `--warmup` (2), `--pics-iters K1 K2` (5 55), `--cg N`, `--pics-reps` (3), `--check`, `--tmpdir` (where the
+`--reps` (10), `--warmup` (2), `--pics-iters K1 K2` (5 55), `--cg N`, `--pics-reps` (3), `--check`, `--fit`, `--tmpdir` (where the
 `.cfl` files go; the 3D presets need a few GB), `--sif`, `--out`. `--help` lists them.
 
 ## Results

@@ -11,7 +11,11 @@
 #   SIF      BART image (default bart/bart.sif; downloaded by bart/build_bart.sh --sif if missing)
 #   PY       Python with NumPy and CuPy (default ~/.conda/envs/mr_aha/bin/python)
 #   MODULES  environment modules to load (default: CUDA toolkit and Apptainer of this cluster)
-#   SETS     which runs: any of "small full cg" (default: all three)
+#   SETS     which runs: any of "small full fit cg" (default: all four)
+#              small  the problems BART fits on a 24 GB GPU, for comparison between GPUs
+#              full   the presets as they are (BART runs out of memory on some)
+#              fit    every preset shrunk only as far as BART needs to fit THIS GPU (--fit)
+#              cg     20 CG iterations on the small and the fitted problems
 #
 # BART cannot be compiled on this cluster (it needs GCC >= 12), so it runs from
 # the image; MR_AHA is compiled here for the GPU and runs natively.
@@ -27,7 +31,7 @@ cd "$ROOT"
 ARCH=${ARCH:?set ARCH=89 (L40S) or 90 (H100)}
 SIF=${SIF:-$ROOT/bart/bart.sif}
 PY=${PY:-$HOME/.conda/envs/mr_aha/bin/python}
-SETS=${SETS:-small full cg}
+SETS=${SETS:-small full fit cg}
 module load ${MODULES:-cuda12.9/toolkit/12.9.1 apptainer/1.0.1}
 export PATH=$(dirname "$PY"):$PATH
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
@@ -67,7 +71,9 @@ for set in $SETS; do
     case $set in
     small) for p in "${SMALL[@]}"; do run $p --check --methods $OPS; done ;;
     full)  for p in "${FULL[@]}";  do run $p --check --methods $OPS; done ;;
-    cg)    for p in "${SMALL[@]}" "${FULL[@]}"; do run $p --methods $CG --cg 20; done ;;
+    fit)   for p in "${FULL[@]}";  do run $p --fit --check --methods $OPS; done ;;
+    cg)    for p in "${SMALL[@]}"; do run $p --methods $CG --cg 20; done
+           for p in "${FULL[@]}";  do run $p --fit --methods $CG --cg 20; done ;;
     *)     echo "unknown set $set" ;;
     esac
 done
