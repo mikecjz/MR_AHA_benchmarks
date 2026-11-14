@@ -156,49 +156,173 @@ Options: `--problem`, `--n`, `--L`, `--coils`, `--spokes`, `--samples`, `--data`
 
 ## Results
 
-TITAN RTX (24 GB), CUDA 12.6, BART v1.0.01, one GPU, `--check`. Times are the best median of
-2–3 runs; on the shared machine the larger problems varied by up to 2.5× between runs for both
-libraries (ranges in brackets). Set-up includes the PSF / Toeplitz kernel.
+MR_AHA [`c60db28`](https://github.com/mikecjz/MR_AHA/tree/c60db28), BART v1.0.01, one GPU,
+`--check`. On the TITAN RTX (24 GB) BART is the native build with CUDA 12.6. On the L40S (45 GB
+usable) and the H100 (80 GB) BART runs from the container image and MR_AHA is built on the node
+with CUDA 12.9; those numbers come from `hpc/bench_bart.sbatch`, one job per GPU. The TITAN RTX
+numbers are the faster of two runs on a shared machine. Set-up includes the PSF / Toeplitz
+kernel. Memory is the GPU memory a method holds after its warm-up.
 
-| Problem | MR_AHA Toeplitz | BART Toeplitz (full PSF) | BART upper-triag | BART upper-triag lowmem | `bart pics` per CG iteration | MR_AHA NUFFT |
-|---|---|---|---|---|---|---|
-| `2d` 160², L=6, 16 coils | **2.20 ms** (0.05 GB) | 4.70 ms (0.32 GB) | 5.14 ms (0.32 GB) | 5.22 ms (0.17 GB) | 5.1 ms [5.1–5.6] | 21 ms |
-| `2d72` with L=24 (320², 12 coils) | **44 ms** (1.3 GB) | 148 ms [148–405] (12.3 GB) | 156 ms [156–198] (7.1 GB) | 155 ms [155–440] (3.9 GB) | 159 ms [159–338] | 296 ms |
-| `stack` 160×160×28, L=12, 12 coils, 140×160 | **133 ms** [133–192] (2.8 GB) | out of memory | out of memory | 751 ms [751–1556] (10.9 GB) | 673 ms [673–1562] | 541 ms |
-| `3d` 96³, L=12, 12 coils, 5645×96 | **387 ms** [387–985] (6.8 GB) | out of memory | out of memory | 829 ms [829–2104] (13.1 GB) | 1338 ms [1338–2110] | 3619 ms |
-| full `2d72` (L=72), `stack`, `3d` presets | 673 / 1012 ms / OOM | out of memory | out of memory | out of memory | out of memory | 722 / 2880 / 11713 ms |
+### Problems fitted to each GPU
 
-* BART's Toeplitz operator is **2.1–5.6× slower** than MR_AHA's here and needs **2–10× the GPU
-  memory** (all coils at once, $2^d$ decomposed grids). On 24 GB, BART fits the stack and 3D
-  problems only in lowmem mode, and none of the full-size presets except `2d`. MR_AHA's own full
-  `3d` preset (20 GB kernel) does not fit either.
-* The upper-triangular PSF saves memory but not time in BART (its triangular multiply kernel is
-  slower than the full one).
+BART cannot hold all presets on any of the three GPUs. `--fit` shrinks a preset only as far as
+BART needs in its most frugal mode (upper-triangular PSF, low memory), so each GPU gets the
+largest problem of the ladder that BART fits on it (BART's memory in brackets):
+
+| Preset | TITAN RTX (24 GB) | L40S (45 GB) | H100 (80 GB) |
+|---|---|---|---|
+| `2d72` (320², L=72) | **L=64** (22.8 GB) | as it is (28.4 GB) | as it is (28.4 GB) |
+| `stack` (320²×56, L=12) | **256²×28** (17.2 GB) | **320²×32** (30.7 GB) | **320²×48** (46.0 GB) |
+| `3d` (160³, L=12) | **128³** (19.6 GB) | **144³** (27.9 GB) | as it is (38.3 GB) |
+
+### One $A^H A$ on the fitted problems
+
+**TITAN RTX**
+
+| Problem | MR_AHA Toeplitz | BART full PSF | BART upper-triag | BART upper-triag, low memory | Best BART / MR_AHA | `bart pics` per CG iteration | MR_AHA NUFFT |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `2d` 160², L=6 | **2.16 ms** (0.05 GB) | 4.75 ms (0.32 GB) | 5.13 ms (0.32 GB) | 5.23 ms (0.17 GB) | 2.2× | 4.7 ms | 20 ms |
+| `2d72` 320², L=64 | **175 ms** (7.2 GB) | out of memory | out of memory | 985 ms (22.8 GB) | 5.6× | 988 ms | 627 ms |
+| `stack` 256²×28 | **302 ms** (7.2 GB) | out of memory | out of memory | 1714 ms (17.2 GB) | 5.7× | 1717 ms | 828 ms |
+| `3d` 128³ | **740 ms** (16.1 GB) | out of memory | out of memory | 1913 ms (19.6 GB) | 2.6× | 1920 ms | 3795 ms |
+
+**L40S**
+
+| Problem | MR_AHA Toeplitz | BART full PSF | BART upper-triag | BART upper-triag, low memory | Best BART / MR_AHA | `bart pics` per CG iteration | MR_AHA NUFFT |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `2d` 160², L=6 | **0.44 ms** (0.05 GB) | 1.52 ms (0.36 GB) | 2.42 ms (0.36 GB) | 1.24 ms (0.21 GB) | 2.8× | 5.1 ms | 13 ms |
+| `2d72` 320², L=72 | **90 ms** (9.0 GB) | out of memory | out of memory | 705 ms (28.4 GB) | 7.8× | 710 ms | 434 ms |
+| `stack` 320²×32 | **417 ms** (12.9 GB) | out of memory | out of memory | 2521 ms (30.7 GB) | 6.0× | 2537 ms | 913 ms |
+| `3d` 144³ | **792 ms** (23.0 GB) | out of memory | out of memory | 2332 ms (27.9 GB) | 2.9× | 2339 ms | 4210 ms |
+
+**H100**
+
+| Problem | MR_AHA Toeplitz | BART full PSF | BART upper-triag | BART upper-triag, low memory | Best BART / MR_AHA | `bart pics` per CG iteration | MR_AHA NUFFT |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `2d` 160², L=6 | **0.53 ms** (0.05 GB) | 1.31 ms (0.38 GB) | 2.26 ms (0.39 GB) | 1.64 ms (0.23 GB) | 2.5× | 1.8 ms | 6.62 ms |
+| `2d72` 320², L=72 | **36 ms** (9.0 GB) | out of memory | out of memory | 277 ms (28.4 GB) | 7.7× | 278 ms | 201 ms |
+| `stack` 320²×48 | **154 ms** (19.3 GB) | out of memory | out of memory | 912 ms (46.0 GB) | 5.9× | 919 ms | 685 ms |
+| `3d` 160³ | **253 ms** (31.5 GB) | out of memory | out of memory | 762 ms (38.3 GB) | 3.0× | 767 ms | 2052 ms |
+
+* MR_AHA's Toeplitz operator is **2.1–7.8× faster** than BART's fastest mode on every problem and
+  GPU, and holds less GPU memory.
+* The gap is largest on `2d72` and on the stack. For ranks above 30 MR_AHA `c60db28` has tiled
+  block-diagonal kernels; before them `2d72` took 335 ms on the H100, more than BART's 277 ms.
+  BART has no stack-of-stars mode, so it treats a stack as a 3D problem oversampled along z.
+* On these problems BART runs only with the upper-triangular PSF in low-memory mode. The
+  upper-triangular PSF saves memory but not time (its multiply kernel is slower than the full
+  one where both run).
 * `bart pics` per CG iteration, measured through `bart.py`, agrees with the operator timing of
-  `bart_aha`, so the helper measures what BART users get.
-* Accuracy (`--check`, relative to MR_AHA Toeplitz after the best scalar): BART full PSF 7e-6 (2D) to
-  1.6e-5. BART upper-triag 0.3–0.8 with these complex Gram blocks (the conjugation bug above);
-  with a real basis 5e-6 to 7e-6 (2D, stack, 3D checked on small problems).
+  `bart_aha`, so the helper measures what BART users get. On the tiny `2d` problem the
+  per-iteration time through the container is not reliable: the start of the container varies
+  by more than the iterations take.
+* Accuracy (`--check`, relative to MR_AHA Toeplitz after the best scalar): BART full PSF 7e-6
+  (`2d`) and 1.6e-5 (`2d72`, L=24), the same on all three GPUs. BART upper-triag 0.2–0.9 with
+  these complex Gram blocks (the conjugation bug above). MR_AHA's NUFFT method 8e-7 to 2e-6.
+
+### The same problems on all three GPUs
+
+The problems that BART fits on 24 GB, for a comparison between GPUs. MR_AHA Toeplitz / BART's
+fastest mode (ratio):
+
+| Problem | TITAN RTX | L40S | H100 |
+|---|---:|---:|---:|
+| `2d` 160², L=6 | 2.16 ms / 4.75 ms (2.2×) | 0.44 ms / 1.24 ms (2.8×) | 0.53 ms / 1.31 ms (2.5×) |
+| `2d72` 320², L=24 | 43 ms / 150 ms (3.5×) | 24 ms / 94 ms (4.0×) | 9.00 ms / 25 ms (2.8×) |
+| `stack` 160²×28 | 121 ms / 671 ms (5.6×) | 90 ms / 557 ms (6.2×) | 22 ms / 138 ms (6.3×) |
+| `3d` 96³ | 313 ms / 829 ms (2.6×) | 232 ms / 684 ms (3.0×) | 50 ms / 169 ms (3.4×) |
+
+The three modes of BART on these problems:
+
+**TITAN RTX**
+
+| Problem | MR_AHA Toeplitz | BART full PSF | BART upper-triag | BART upper-triag, low memory | `bart pics` per CG iteration | MR_AHA NUFFT |
+|---|---:|---:|---:|---:|---:|---:|
+| `2d72` 320², L=24 | **43 ms** (1.3 GB) | 150 ms (12.3 GB) | 157 ms (7.1 GB) | 155 ms (3.9 GB) | 156 ms | 224 ms |
+| `stack` 160²×28 | **121 ms** (2.8 GB) | out of memory | out of memory | 671 ms (10.9 GB) | 677 ms | 351 ms |
+| `3d` 96³ | **313 ms** (6.8 GB) | out of memory | out of memory | 829 ms (13.1 GB) | 821 ms | 1694 ms |
+
+**L40S**
+
+| Problem | MR_AHA Toeplitz | BART full PSF | BART upper-triag | BART upper-triag, low memory | `bart pics` per CG iteration | MR_AHA NUFFT |
+|---|---:|---:|---:|---:|---:|---:|
+| `2d72` 320², L=24 | **24 ms** (1.3 GB) | 95 ms (12.4 GB) | 103 ms (7.2 GB) | 94 ms (4.0 GB) | 94.4 ms | 143 ms |
+| `stack` 160²×28 | **90 ms** (2.8 GB) | out of memory | out of memory | 557 ms (11.0 GB) | 561 ms | 225 ms |
+| `3d` 96³ | **232 ms** (6.8 GB) | out of memory | out of memory | 684 ms (13.2 GB) | 690 ms | 1051 ms |
+
+**H100**
+
+| Problem | MR_AHA Toeplitz | BART full PSF | BART upper-triag | BART upper-triag, low memory | `bart pics` per CG iteration | MR_AHA NUFFT |
+|---|---:|---:|---:|---:|---:|---:|
+| `2d72` 320², L=24 | **9.00 ms** (1.3 GB) | 25 ms (12.4 GB) | 41 ms (7.2 GB) | 34 ms (4.0 GB) | 34.9 ms | 66 ms |
+| `stack` 160²×28 | **22 ms** (2.8 GB) | out of memory | 139 ms (75.1 GB) | 138 ms (11.0 GB) | 134 ms | 151 ms |
+| `3d` 96³ | **50 ms** (6.8 GB) | out of memory | 170 ms (21.6 GB) | 169 ms (13.2 GB) | 170 ms | 435 ms |
+
+### The presets as they are
+
+What happens without `--fit`. A failed entry gives the first allocation BART could not get on
+that GPU (from BART's own message; nothing else was on the GPU). A smaller GPU fails on an
+earlier, smaller request, so the sizes differ between GPUs:
+
+| Preset | GPU | MR_AHA Toeplitz | BART full PSF | BART upper-triag | BART upper-triag, low memory |
+|---|---|---:|---:|---:|---:|
+| `2d72` | TITAN RTX | 229 ms (9.0 GB) | fails on a 18 GB request | fails on a 32 GB request | fails on a 8 GB request |
+| `2d72` | L40S | 90 ms (9.0 GB) | fails on a 63 GB request | fails on a 32 GB request | 705 ms (28.4 GB) |
+| `2d72` | H100 | 36 ms (9.0 GB) | fails on a 63 GB request | fails on a 32 GB request | 278 ms (28.4 GB) |
+| `stack` | TITAN RTX | 1011 ms (18.5 GB) | fails on a 49 GB request | fails on a 26 GB request | fails on a 26 GB request |
+| `stack` | L40S | 753 ms (22.6 GB) | fails on a 49 GB request | fails on a 213 GB request | fails on a 26 GB request |
+| `stack` | H100 | 178 ms (22.6 GB) | fails on a 393 GB request | fails on a 213 GB request | fails on a 26 GB request |
+| `3d` | TITAN RTX | out of memory | fails on a 35 GB request | fails on a 152 GB request | fails on a 19 GB request |
+| `3d` | L40S | 1062 ms (31.5 GB) | fails on a 281 GB request | fails on a 152 GB request | fails on a 19 GB request |
+| `3d` | H100 | 253 ms (31.5 GB) | fails on a 281 GB request | fails on a 152 GB request | 761 ms (38.3 GB) |
+
+* BART's full PSF and its upper-triangular PSF without low-memory mode ask for single blocks of
+  tens to hundreds of GB on the stack and 3D presets. They run only on the small 2D problems.
+* MR_AHA runs every preset on every GPU except the unmasked `3d` preset on 24 GB inside this
+  script (its 20 GB kernel fits only without the other arrays the comparison keeps; the masked
+  operator of `python/bench_aha.py` fits).
 
 ### 20 conjugate-gradient iterations
 
-Same GPU and problems, `--methods bart_pics_cg mr_aha_toeplitz mr_aha_nufft --cg 20`. "End to end"
-is MR_AHA's inputs-to-GPU + operator creation + CG, and BART's whole `pics` call through `bart.py`.
+`--methods bart_pics_cg mr_aha_toeplitz mr_aha_nufft --cg 20`, on the fitted problems. "End to
+end" is MR_AHA's inputs-to-GPU + operator creation + CG, and BART's whole `pics` call through
+`bart.py`. The BART mode is the first of full PSF, low memory, and upper-triangular PSF with low
+memory that fits.
 
-| Problem | MR_AHA Toeplitz CG | BART `pics` CG | | MR_AHA end to end | BART end to end | | MR_AHA NUFFT CG |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `2d` | **0.055 s** | 0.105 s (full PSF) | 1.9× | **0.10 s** | 0.91 s | 9× | 0.40 s |
-| `2d72` with L=24 | **0.88 s** | 3.03 s (full PSF) | 3.4× | **1.26 s** | 6.64 s | 5.3× | 4.59 s |
-| `stack` 160×160×28 | **2.47 s** | 13.7 s (lowmem) | 5.5× | **3.44 s** | 27.3 s | 7.9× | 7.25 s |
-| `3d` 96³ | **6.32 s** | 16.9 s (lowmem) | 2.7× | **10.5 s** | 32.8 s | 3.1× | 38.8 s |
+| GPU | Problem | MR_AHA Toeplitz CG | BART `pics` CG | Ratio | MR_AHA end to end | BART end to end | Ratio | MR_AHA NUFFT CG |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| TITAN RTX | `2d72` 320², L=64 | **3.54 s** | 19.7 s (upper-triag, low memory) | 5.6× | **5.33 s** | 29.5 s | 5.5× | 13.1 s |
+| TITAN RTX | `stack` 256²×28 | **6.16 s** | 34.7 s (upper-triag, low memory) | 5.6× | **7.84 s** | 62.0 s | 7.9× | 16.7 s |
+| TITAN RTX | `3d` 128³ | **15.0 s** | 38.6 s (upper-triag, low memory) | 2.6× | **24.1 s** | 68.2 s | 2.8× | 76.7 s |
+| L40S | `2d72` 320², L=72 | **1.83 s** | 14.1 s (upper-triag, low memory) | 7.7× | **3.97 s** | 23.3 s | 5.9× | 8.71 s |
+| L40S | `stack` 320²×32 | **8.52 s** | 51.1 s (upper-triag, low memory) | 6.0× | **10.3 s** | 87.5 s | 8.5× | 18.6 s |
+| L40S | `3d` 144³ | **16.0 s** | 47.2 s (upper-triag, low memory) | 2.9× | **22.3 s** | 78.8 s | 3.5× | 83.8 s |
+| H100 | `2d72` 320², L=72 | **0.73 s** | 3.93 s (low memory) | 5.4× | **2.57 s** | 12.3 s | 4.8× | 4.03 s |
+| H100 | `stack` 320²×48 | **3.13 s** | 18.3 s (upper-triag, low memory) | 5.8× | **5.27 s** | 58.9 s | 11.2× | 13.8 s |
+| H100 | `3d` 160³ | **5.10 s** | 15.3 s (upper-triag, low memory) | 3.0× | **9.60 s** | 48.0 s | 5.0× | 41.0 s |
+
+On the problems that fit 24 GB:
+
+| GPU | Problem | MR_AHA Toeplitz CG | BART `pics` CG | Ratio | MR_AHA end to end | BART end to end | Ratio | MR_AHA NUFFT CG |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| TITAN RTX | `2d72` 320², L=24 | **0.88 s** | 3.05 s (full PSF) | 3.5× | **1.27 s** | 6.58 s | 5.2× | 4.90 s |
+| TITAN RTX | `stack` 160²×28 | **2.46 s** | 13.7 s (low memory) | 5.5× | **3.40 s** | 27.5 s | 8.1× | 7.39 s |
+| TITAN RTX | `3d` 96³ | **6.32 s** | 16.9 s (low memory) | 2.7× | **10.5 s** | 32.2 s | 3.1× | 34.9 s |
+| L40S | `2d72` 320², L=24 | **0.48 s** | 1.85 s (full PSF) | 3.9× | **1.02 s** | 5.55 s | 5.4× | 2.89 s |
+| L40S | `stack` 160²×28 | **1.84 s** | 9.33 s (low memory) | 5.1× | **2.82 s** | 20.6 s | 7.3× | 4.51 s |
+| L40S | `3d` 96³ | **4.68 s** | 11.6 s (low memory) | 2.5× | **6.73 s** | 24.4 s | 3.6× | 21.1 s |
+| H100 | `2d72` 320², L=24 | **0.18 s** | 0.51 s (full PSF) | 2.8× | **0.60 s** | 3.55 s | 5.9× | 1.32 s |
+| H100 | `stack` 160²×28 | **0.45 s** | 2.28 s (low memory) | 5.1× | **1.38 s** | 10.9 s | 7.9× | 3.04 s |
+| H100 | `3d` 96³ | **1.01 s** | 2.81 s (low memory) | 2.8× | **2.21 s** | 12.6 s | 5.7× | 8.75 s |
 
 * CG time is almost all $A^H A$ in both, so the CG ratio follows the operator ratio above.
-* BART's end-to-end time adds a process start, `.cfl` I/O and the PSF on every call (≈ 0.9 s on
-  `2d`; on `stack` and `3d` as much as the iterations), because `bart.py` cannot keep an operator
-  alive.
-* The `2d` BART CG time is the difference of two ≈ 1 s calls and varies by ±30 % between runs.
+* BART's end-to-end time adds a process start, `.cfl` I/O and the PSF on every call, because
+  `bart.py` cannot keep an operator alive; with the container image also the start of the
+  container.
+* The `2d` problem is left out: its 20 iterations take less than the run-to-run variation of
+  the two `pics` calls they are the difference of.
 
-The JSON files are under `results/titan_rtx/bench_bart_*` (not tracked, like all results).
+The JSON files are under `results/<gpu>/bench_bart_*` (not tracked, like all results).
 
 ## Files
 
