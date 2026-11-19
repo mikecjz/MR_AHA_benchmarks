@@ -2,7 +2,7 @@
 
 Speed benchmarks for [MR_AHA](https://github.com/mikecjz/MR_AHA), the GPU library that evaluates
 the forward normal operator $A^H A$ for non-Cartesian MRI with low-rank (subspace /
-MR-Multitasking) modelling.
+MR-Multitasking) modeling.
 
 One script per language builds a test problem, creates the operator with each method on one or
 several GPUs, and prints how long the set-up and one application take:
@@ -101,9 +101,9 @@ time, kernel time, mask time, minimum and mean application time, GPU model, vers
 
 Timing notes:
 
-* All GPUs are synchronised before and after every timed section.
+* All GPUs are synchronized before and after every timed section.
 * A tiny warm-up problem runs first so that loading cuFFT, cuBLAS and cufinufft is not charged to
-  the first row. Other GPUs still initialise on their first operator; `--setup-reps 3` reports
+  the first row. Other GPUs still initialize on their first operator; `--setup-reps 3` reports
   that first, cold, creation separately from the median of the rest.
 * On a shared machine, pick idle GPUs with `CUDA_VISIBLE_DEVICES`.
 

@@ -60,7 +60,7 @@ small C program ``bart_aha`` (``bart_aha.c``), linked against BART's
 libraries: BART's tools have no command that applies only the normal
 operator, and ``bart.py`` runs tools as separate processes that exchange
 ``.cfl`` files, so an operator cannot stay alive between calls. ``bart_aha``
-builds exactly the model of ``bart pics`` (``sense_nc_init()``), synchronises
+builds exactly the model of ``bart pics`` (``sense_nc_init()``), synchronizes
 the GPU around every timed call and prints JSON; this script writes its
 inputs with BART's ``cfl.py`` and reads its result.
 
@@ -176,7 +176,7 @@ os.environ.setdefault("BART_TOOLBOX_PATH", str(BART_DIR))
 
 import problems  # noqa: E402
 
-#: Terminal colour codes in BART's messages.
+#: Terminal color codes in BART's messages.
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 #: Methods in report order.
@@ -274,7 +274,7 @@ def to_bart(prob: dict) -> dict:
         k[d] = traj[d] * n_dim[d] / (2 * np.pi)
 
     if tt == "stack":
-        # One readout per (spoke, kz); kz in centred order p - Nz/2.
+        # One readout per (spoke, kz); kz in centered order p - Nz/2.
         phi2 = prob["phi2"]                                   # (L, L, Nkz, Ntrajs)
         nkz = phi2.shape[2]
         U = gram_factors(phi2.reshape(L, L, nkz * ntr))       # (nkz*ntr, r, L): t = kz*ntr + s
@@ -329,13 +329,13 @@ def gpu_memory():
 
 
 def oom_error(msg: str, used_before):
-    """Recognise BART's GPU out-of-memory failure and document it.
+    """Recognize BART's GPU out-of-memory failure and document it.
 
     BART prints ``Trying to allocate N GB failed.`` and a hint about
     ``BART_GPU_GLOBAL_MEMORY`` when ``cudaMalloc`` fails (``src/num/gpuops.c``).
 
     Args:
-        msg: Output of the failed BART program (colour codes removed).
+        msg: Output of the failed BART program (color codes removed).
         used_before: GPU memory in use before BART started, GiB (or ``None``).
 
     Returns:

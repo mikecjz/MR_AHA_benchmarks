@@ -35,10 +35,10 @@ For every method and GPU count:
 
 ``set-up``
     Wall-clock time of creating the operator (kernel, plans, copies to the
-    other GPUs), all GPUs synchronised. With ``--setup-reps N > 1`` the
+    other GPUs), all GPUs synchronized. With ``--setup-reps N > 1`` the
     operator is created ``N`` times: the first creation is reported as
     ``cold`` and the median of the others as ``set-up``. The first creation
-    on a GPU also pays for one-off initialisation (CUDA context, cuFFT,
+    on a GPU also pays for one-off initialization (CUDA context, cuFFT,
     cufinufft); a tiny warm-up problem takes that cost on the current GPU
     before the first table. ``kernel_s`` in the JSON is the part spent on the
     Toeplitz kernel.
@@ -148,7 +148,7 @@ def setup() -> None:
 
 
 # --------------------------------------------------------------------------
-# Devices, synchronisation, memory
+# Devices, synchronization, memory
 # --------------------------------------------------------------------------
 
 def visible_gpus() -> int:
@@ -339,7 +339,7 @@ def cg_time(apply, b, n_iter: int, devices) -> float:
         apply: The operator.
         b: Right-hand side.
         n_iter: Number of iterations.
-        devices: Devices to synchronise before and after.
+        devices: Devices to synchronize before and after.
 
     Returns:
         Seconds.
@@ -508,7 +508,7 @@ def warm_up(methods, args) -> None:
     the current GPU, which loads cuFFT, cuBLAS and cufinufft and compiles
     CuPy's kernels. Without it the first row of the first table would carry
     these costs in its set-up time. The other GPUs of a multi-GPU run are
-    still initialised by their first operator; use ``--setup-reps`` to
+    still initialized by their first operator; use ``--setup-reps`` to
     separate that.
 
     Args:
