@@ -5,7 +5,7 @@ Reads a problem file written by ``julia/save_problem.py`` and the result of
 Toeplitz and NUFFT operators to the same ``x`` (Python interface, one GPU) and
 prints the relative 2-norm differences (also of MR_AHA's masked Toeplitz
 operator), both as is and after the best-fitting
-complex scalar ``c = <y_ref, y> / <y, y>`` (to expose a pure normalisation
+complex scalar ``c = <y_ref, y> / <y, y>`` (to expose a pure normalization
 difference).
 
 Usage::

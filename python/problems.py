@@ -9,7 +9,7 @@ from and applied to:
 ``phi2``
     Gram blocks :math:`\\Phi\\Phi^H` of the temporal basis (MR-Multitasking
     convention), ``complex64``, ``(L, L, Ntrajs)`` or, for a stack,
-    ``(L, L, Nkz, Ntrajs)`` with kz in centred order.
+    ``(L, L, Nkz, Ntrajs)`` with kz in centered order.
 ``traj``
     Trajectory in radians, ``float32``, ``(ndim, Nkx, Ntrajs)``.
 ``x``
@@ -120,7 +120,7 @@ def override(p: Preset, n_dim: Optional[Sequence[int]] = None,
 def radial_traj(ndim: int, n_traj: int, n_kx: int) -> np.ndarray:
     """Golden-angle (2D) or golden-means (3D) radial trajectory.
 
-    Every readout is a full diameter through the centre of k-space. In 2D the
+    Every readout is a full diameter through the center of k-space. In 2D the
     angle advances by the golden angle; in 3D the directions follow the
     two-dimensional golden means of Chan et al. (kooshball).
 
@@ -170,7 +170,7 @@ def gram_blocks(rng: np.random.Generator, L: int, n: int) -> np.ndarray:
 def coil_maps(n_coils: int, shape: Sequence[int]) -> np.ndarray:
     """Smooth synthetic sensitivity maps.
 
-    Coil ``c`` has a Gaussian magnitude profile centred on a ring around the
+    Coil ``c`` has a Gaussian magnitude profile centered on a ring around the
     object (alternating between two rings along z in 3D) and a linear phase
     whose direction depends on the coil. The maps are not meant to be
     realistic, only smooth, complex and different from each other.

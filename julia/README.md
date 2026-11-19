@@ -57,7 +57,7 @@ coefficients are bit-identical to those MR_AHA is timed with.
   is twice as many non-uniform points in the kernel computation (set-up), not in the application.
   This conversion is not timed (`prep_s` in the JSON).
 * **Trajectory.** Radians in `[-π, π)` divided by 2π. A stack becomes a 3D trajectory with
-  `kz = (iz - Nz÷2) / Nz` for the centred kz index `iz`.
+  `kz = (iz - Nz÷2) / Nz` for the centered kz index `iz`.
 * **Coefficients / maps.** Column-major `[Nx, Ny, (Nz,) L]` and one `[Nx, Ny, (Nz)]` map per coil,
   as the package wants.
 
@@ -75,7 +75,7 @@ the Julia result (`bench_aha.jl --data P.mat --save-result Y.mat`). On a TITAN R
 (relative 2-norm differences; the random `x` of the benchmark is a worst case for masking.)
 
 * **No scaling difference**: the least-squares scalar is 1 to 5 digits, so both packages compute
-  the same, unnormalised $A^H A$ (type-2 NUFFT with $e^{-i k\cdot r}$, adjoint with $e^{+i k\cdot r}$).
+  the same, unnormalized $A^H A$ (type-2 NUFFT with $e^{-i k\cdot r}$, adjoint with $e^{+i k\cdot r}$).
 * **Same sign and Gram-block convention**: with `U = transpose(Φ_rt)` and `k/(2π)` the results
   agree; a sign or conjugation error would give O(1) differences.
 * The remaining 2-5e-3 is the package's kernel mask: it is of the same order as MR_AHA's own masked
@@ -156,7 +156,7 @@ job on the same node. A^H A in ms (set-up in s):
 * Correctness (`check_mr_aha.py`) is the same as on the TITAN RTX on both GPUs: 1.9e-3 / 3.4e-3 /
   4.6e-3 against MR_AHA's NUFFT, scalar 0.99999.
 
-Run on a Slurm cluster from the repository root (`third_party/MR_AHA` initialised with
+Run on a Slurm cluster from the repository root (`third_party/MR_AHA` initialized with
 `--recursive`, problem files in `julia/data/`): `mkdir -p julia/hpc/logs`, then
 `sbatch julia/hpc/setup_julia.sbatch` once (installs the official Julia 1.11.7 tarball in `~/opt`
 and instantiates `julia/` on a compute node), then

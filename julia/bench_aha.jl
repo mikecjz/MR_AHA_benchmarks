@@ -239,7 +239,7 @@ function to_package(p)
         U, r = gram_to_basis(reshape(p.phi2, Ntr * Nz, L, L))
         trj = Array{Float32}(undef, 3, Nkx, r * Ntr * Nz)
         for z in 1:Nz, t in 1:Ntr
-            # kz in centred order: index z (1-based) is frequency z-1-Nz÷2,
+            # kz in centered order: index z (1-based) is frequency z-1-Nz÷2,
             # i.e. (z-1-Nz÷2)/Nz cycles per sample.
             kz = Float32((z - 1 - Nz ÷ 2) / Nz)
             b = t + Ntr * (z - 1)
@@ -311,7 +311,7 @@ end
     timed_create(trj, U, cmaps, img_shape; keep) -> (t, kernel_s[, A, n_mask])
 
 Create the operator with [`make_op`](@ref), timing the whole creation
-(synchronised). With `keep=false` the operator is dropped before returning, so
+(synchronized). With `keep=false` the operator is dropped before returning, so
 that it can be garbage collected.
 """
 function timed_create(trj, U, cmaps, img_shape; keep)

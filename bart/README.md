@@ -31,7 +31,7 @@ How it differs from MR_AHA's Toeplitz operator:
   own trajectory; MR_AHA takes a Gram block $\Phi_2$ per readout. The benchmark factorises each
   $\Phi_2 = \sum_k u_k u_k^H$ and gives each readout `r` frames (2 for the synthetic blocks) with
   basis rows $u_k$. With that, BART's full-PSF Toeplitz operator equals MR_AHA's up to a real
-  scale (BART's FFT normalisation) to ~1e-5.
+  scale (BART's FFT normalization) to ~1e-5.
 * **Upper-triangular PSF bug (v1.0.01).** `upper-triag-psf` applies $\overline{\Phi_2}$ where
   the full PSF and the plain NUFFT apply $\Phi_2$: with a complex basis its result is wrong
   (`--check` shows ~0.5 relative error for `bart_toep_triag*`), with a real basis (the usual BART
@@ -145,7 +145,7 @@ One GPU: the first of `CUDA_VISIBLE_DEVICES`. Results are printed and written to
 
 The `bart_*` operator rows are timed by `bart_aha` (`bart_aha.c`), a ~200-line C program linked
 against BART's libraries. It builds exactly the model of `bart pics` (`sense_nc_init()`: maps ∘
-NUFFT-with-basis), computes the PSF on the GPU, and times `linop_normal()` with the GPU synchronised
+NUFFT-with-basis), computes the PSF on the GPU, and times `linop_normal()` with the GPU synchronized
 around each call. This is needed because BART's tools have no "apply $A^H A$" command and
 `bart.py` cannot keep an operator alive between calls. `bart_pics` is the cross-check through the
 official Python interface: one CG iteration costs one $A^H A$ plus a few vector operations.

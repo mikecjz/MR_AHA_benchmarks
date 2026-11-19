@@ -82,7 +82,7 @@ function report = bench_aha(varargin)
 %   WHAT IS REPORTED, for every method and GPU count
 %     set-up    wall-clock time of creating the operator (kernel, plans,
 %               copies to the other GPUs). The first creation on a GPU also
-%               pays for one-off initialisation; a tiny warm-up problem takes
+%               pays for one-off initialization; a tiny warm-up problem takes
 %               that cost on the primary GPU before the first table.
 %     A'A       median wall-clock time of one application
 %     speed-up  time of the same method on one GPU divided by this row's

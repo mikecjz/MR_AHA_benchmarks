@@ -37,7 +37,7 @@ function d = bench_problem(name, varargin)
 %     file is a .mat file holding
 %       SEs        [Nx, Ny, Ncoils] or [Nx, Ny, Nz, Ncoils]
 %       phi2       [Ntrajs, L, L] or, for a stack, [Ntrajs, Nkz, L, L]
-%                  (MR-Multitasking Gram blocks, kz in centred order)
+%                  (MR-Multitasking Gram blocks, kz in centered order)
 %       traj       [Ntrajs, Nkx, ndim] in radians
 %       traj_type  '2D', '3D' or 'stack' (or pass 'traj_type')
 %       x          optional coefficients [Nx, Ny, (Nz,) L] to apply the
@@ -145,7 +145,7 @@ end
 
 function traj = radial_traj(ndim, n_traj, n_kx)
 %RADIAL_TRAJ  Golden-angle (2D) or golden-means (3D) radial trajectory.
-%   Every readout is a full diameter through the centre of k-space. Returns
+%   Every readout is a full diameter through the center of k-space. Returns
 %   real single [Ntrajs, Nkx, ndim] in radians, [-pi, pi).
     k = pi * ((0:n_kx - 1) - floor(n_kx / 2)) / floor(n_kx / 2);
     m = (0:n_traj - 1).';
@@ -172,7 +172,7 @@ end
 
 function SEs = coil_maps(n_coils, n)
 %COIL_MAPS  Smooth synthetic sensitivity maps [Nx, Ny, (Nz,) Ncoils].
-%   Coil c has a Gaussian magnitude profile centred on a ring around the
+%   Coil c has a Gaussian magnitude profile centered on a ring around the
 %   object (alternating between two rings along z in 3D) and a linear phase
 %   whose direction depends on the coil. Not realistic, only smooth, complex
 %   and different from each other.
