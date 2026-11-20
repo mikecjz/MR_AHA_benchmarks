@@ -1,7 +1,9 @@
 #!/bin/bash
-# MRISubspaceRecon.jl vs MR_AHA (711003d) A^H A on one GPU.
+# MRISubspaceRecon.jl vs MR_AHA (third_party/MR_AHA): A^H A and CG iterations on one GPU.
 #   sbatch --gres=gpu:l40s:1 --export=ALL,ARCH=89 julia/hpc/bench_julia.sbatch
 #   sbatch --gres=gpu:h100:1 --export=ALL,ARCH=90 julia/hpc/bench_julia.sbatch
+# CG=N (default 20) sets the number of CG iterations timed with each operator;
+# CG=0 times A^H A only.
 #SBATCH --job-name=julia_aha
 #SBATCH --partition=gpu
 #SBATCH --cpus-per-task=16
@@ -12,6 +14,7 @@ set -uo pipefail
 ROOT=${SLURM_SUBMIT_DIR:-$(pwd)}
 cd "$ROOT"
 ARCH=${ARCH:?set ARCH=89 or 90}
+CG=${CG:-20}
 JL=$HOME/opt/julia-1.11.7/bin/julia
 PY=$HOME/.conda/envs/mr_aha/bin/python
 module load cuda12.9/toolkit/12.9.1
@@ -38,8 +41,8 @@ env -u LD_LIBRARY_PATH "$JL" --project=julia -e 'using Pkg; Pkg.precompile(); us
 
 # ---- MRISubspaceRecon.jl ----
 cd julia
-env -u LD_LIBRARY_PATH "$JL" -t 8 --project=. bench_aha.jl --problem 2d 2d72 stack 3d --setup-reps 3
-env -u LD_LIBRARY_PATH "$JL" -t 8 --project=. bench_aha.jl --data data/stack_nz32.mat --setup-reps 3
+env -u LD_LIBRARY_PATH "$JL" -t 8 --project=. bench_aha.jl --problem 2d 2d72 stack 3d --setup-reps 3 --cg $CG
+env -u LD_LIBRARY_PATH "$JL" -t 8 --project=. bench_aha.jl --data data/stack_nz32.mat --setup-reps 3 --cg $CG
 for p in 2d 3d_small stack_small; do
     env -u LD_LIBRARY_PATH "$JL" -t 8 --project=. bench_aha.jl --data data/$p.mat --no-json \
         --save-result data/y_${p}_julia_sm$ARCH.mat > /dev/null &&
@@ -48,6 +51,6 @@ done
 cd ..
 
 # ---- MR_AHA on the same problems ----
-"$PY" -u python/bench_aha.py --problem 2d 2d72 stack 3d --methods toeplitz nufft_c --mask both --setup-reps 3 2>&1 | grep -v "^\[mr_aha\]"
-"$PY" -u python/bench_aha.py --problem stack --n 320 320 32 --methods toeplitz nufft_c --mask both --setup-reps 3 2>&1 | grep -v "^\[mr_aha\]"
+"$PY" -u python/bench_aha.py --problem 2d 2d72 stack 3d --methods toeplitz nufft_c --mask both --setup-reps 3 --cg $CG 2>&1 | grep -v "^\[mr_aha\]"
+"$PY" -u python/bench_aha.py --problem stack --n 320 320 32 --methods toeplitz nufft_c --mask both --setup-reps 3 --cg $CG 2>&1 | grep -v "^\[mr_aha\]"
 echo "== done $(date)"
