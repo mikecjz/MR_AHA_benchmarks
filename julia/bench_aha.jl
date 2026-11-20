@@ -19,6 +19,12 @@ Toeplitz embedding (see `julia/README.md` for the details and source citations):
   separately only to report the kernel time on its own.
 * **A^H A**: one `mul!(y, A, x)`, median over `--reps` runs after `--warmup`
   runs.
+* **CG** (`--cg N`): `N` plain conjugate-gradient iterations on
+  ``A^H A u = x`` from `u = 0`, without a stopping test, after one untimed
+  iteration (which compiles the vector kernels). This is the same algorithm as
+  `cg_time` in `python/bench_aha.py`, which the MR_AHA and BART CG runs
+  (`python/bench_aha.py --cg`, `bart/bench_bart.py --cg`) use, so the three
+  time the same work.
 * **mem GB**: free device memory before creating the operator minus free device
   memory after the warm-up applications (CUDA.jl's pool is reclaimed first), as
   in the Python benchmark.
@@ -57,7 +63,7 @@ well.
 
     julia --project=julia julia/bench_aha.jl [--problem 2d 2d72 stack 3d]
           [--data FILE.mat] [--reps 10] [--warmup 2] [--setup-reps 3]
-          [--out FILE.json] [--save-result FILE.mat] [--no-json]
+          [--cg N] [--out FILE.json] [--save-result FILE.mat] [--no-json]
 
 Run with one GPU only, e.g. `CUDA_VISIBLE_DEVICES=3`.
 """
@@ -94,7 +100,7 @@ Parse the command line (see the module docstring). Unknown options are an error.
 """
 function parse_args(argv)
     a = Dict{String,Any}("problem" => String[], "data" => nothing, "reps" => 10,
-                         "warmup" => 2, "setup-reps" => 3, "out" => nothing,
+                         "warmup" => 2, "setup-reps" => 3, "cg" => 0, "out" => nothing,
                          "save-result" => nothing, "json" => true)
     i = 1
     while i <= length(argv)
@@ -107,7 +113,7 @@ function parse_args(argv)
             continue
         elseif opt in ("--data", "--out", "--save-result")
             a[opt[3:end]] = argv[i+1]; i += 1
-        elseif opt in ("--reps", "--warmup", "--setup-reps")
+        elseif opt in ("--reps", "--warmup", "--setup-reps", "--cg")
             a[opt[3:end]] = parse(Int, argv[i+1]); i += 1
         elseif opt == "--no-json"
             a["json"] = false
@@ -340,6 +346,33 @@ function warm_up(ndim)
 end
 
 """
+    cg_time(A, b, n_iter) -> Float64
+
+Wall-clock seconds of `n_iter` plain conjugate-gradient iterations on
+``A u = b`` from `u = 0`, without a stopping test, so that every operator does
+the same amount of work. Same algorithm as `cg_time` in `python/bench_aha.py`:
+one `A` application, two inner products and three vector updates per
+iteration. `A p` goes into a preallocated buffer.
+"""
+function cg_time(A, b, n_iter)
+    u = zero(b); r = copy(b); p = copy(r); Ap = similar(b)
+    rs = real(dot(r, r))
+    CUDA.synchronize()
+    t0 = time_ns()
+    for _ in 1:n_iter
+        mul!(Ap, A, p)
+        α = ComplexF32(rs / real(dot(p, Ap)))
+        u .+= α .* p
+        r .-= α .* Ap
+        rs_new = real(dot(r, r))
+        p .= r .+ ComplexF32(rs_new / rs) .* p
+        rs = rs_new
+    end
+    CUDA.synchronize()
+    return (time_ns() - t0) / 1e9
+end
+
+"""
     run_problem(name, p, args) -> Dict
 
 Translate, create, time and release the operator for one problem; print a table
@@ -357,7 +390,7 @@ function run_problem(name, p, args)
                            "toeplitz_grid" => collect(grid), "prep_s" => prep_s)
     @printf("\n== %s: %s\n   unmasked packed kernel would be %.2f GB on the %s grid; %d time frames per readout (Gram blocks -> basis in %.1f s)\n",
             name, p.desc, ntri * prod(grid) * 8 / 1e9, join(grid, "x"), r, prep_s)
-    println(header())
+    println(header(args["cg"] > 0))
     A = nothing; x = nothing; y = nothing
     try
         d_trj, d_U, d_cm = CuArray(trj), CuArray(U), CuArray.(cm)
@@ -398,6 +431,11 @@ function run_problem(name, p, args)
         row["aha_min_ms"] = minimum(ts) * 1e3
         row["aha_mean_ms"] = mean(ts) * 1e3
         row["reps"] = args["reps"]
+        if args["cg"] > 0
+            cg_time(A, x, 1)                  # compiles the vector kernels
+            row["cg_s"] = cg_time(A, x, args["cg"])
+            row["cg_iters"] = args["cg"]
+        end
         if args["save-result"] !== nothing
             row["_y"] = reshape(Array(y), size(p.x))
         end
@@ -408,19 +446,21 @@ function run_problem(name, p, args)
         A = nothing; x = nothing; y = nothing
         free_bytes()
     end
-    println(fmt_row(row))
+    println(fmt_row(row, args["cg"] > 0))
     return row
 end
 
 """Column headings of the result table (as in `python/bench_aha.py`)."""
-header() = @sprintf("  %-26s %4s %9s %9s %10s %8s %8s", "method", "GPUs",
-                    "set-up s", "kernel s", "A^H A ms", "mem GB", "Λ GB")
+header(cg=false) = @sprintf("  %-26s %4s %9s %9s %10s %8s %8s", "method", "GPUs",
+                            "set-up s", "kernel s", "A^H A ms", "mem GB", "Λ GB") *
+                   (cg ? @sprintf(" %8s", "CG s") : "")
 
 """Format one result row."""
-function fmt_row(r)
+function fmt_row(r, cg=false)
     haskey(r, "error") && return @sprintf("  %-26s %4d   failed: %s", r["method"], 1, r["error"])
     return @sprintf("  %-26s %4d %9.3f %9.3f %10.2f %8.2f %8.2f", r["method"], 1,
-                    r["setup_s"], r["kernel_s"], r["aha_ms"], r["mem_gb"], r["kernel_gb"])
+                    r["setup_s"], r["kernel_s"], r["aha_ms"], r["mem_gb"], r["kernel_gb"]) *
+           (cg && haskey(r, "cg_s") ? @sprintf(" %8.3f", r["cg_s"]) : "")
 end
 
 """

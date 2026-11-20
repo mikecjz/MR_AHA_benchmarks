@@ -165,6 +165,39 @@ and instantiates `julia/` on a compute node), then
 node types with different CPUs sharing `~/.julia/compiled` invalidate each other's native code and
 wait on each other's precompile locks.
 
+### 20 conjugate-gradient iterations
+
+`--cg 20`: 20 plain CG iterations on $A^H A u = x$ from $u = 0$, without a stopping test, after
+one untimed iteration. The algorithm is `cg_time` of `python/bench_aha.py`, which the MR_AHA and
+BART CG runs (`python/bench_aha.py --cg`, `bart/bench_bart.py --cg`) use, so each library does the
+same work: one $A^H A$, two inner products and three vector updates per iteration. Same presets,
+settings and job as above (`hpc/bench_julia.sbatch` with `CG=20` on the L40S and the H100, MR_AHA
+`da3e148`, whose CUDA code is that of `c60db28`). On the TITAN RTX the same commands ran by hand on
+one GPU (CUDA 12.6 for MR_AHA). Seconds; the ratio is the package over MR_AHA's masked operator:
+
+| Preset | GPU | MRISubspaceRecon.jl | MR_AHA toeplitz masked | MR_AHA toeplitz | Ratio | MR_AHA nufft_c |
+|---|---|---:|---:|---:|---:|---:|
+| `2d` | TITAN RTX | 0.065 | **0.050** | 0.051 | 1.3× | 0.43 |
+| `2d` | L40S | 0.018 | **0.014** | 0.014 | 1.3× | 0.27 |
+| `2d` | H100 | 0.019 | **0.013** | 0.013 | 1.5× | 0.13 |
+| `2d72` | TITAN RTX | 16.1 | **4.30** | 4.81 | 3.7× | 15.9 |
+| `2d72` | L40S | 7.27 | **1.75** | 1.83 | 4.2× | 8.75 |
+| `2d72` | H100 | 1.54 | **0.67** | 0.73 | 2.3× | 3.96 |
+| `stack` | all three | fails (2-3-5) | 20.3 / 15.2 / 3.48 | 20.9 / 15.4 / 3.63 | – | 58.5 / 32.4 / 16.0 |
+| `stack`, Nz = 32 | TITAN RTX | 31.0 | **11.4** | 11.8 | 2.7× | 33.1 |
+| `stack`, Nz = 32 | L40S | 23.0 | **8.41** | 8.50 | 2.7× | 18.5 |
+| `stack`, Nz = 32 | H100 | 5.47 | **1.97** | 2.06 | 2.8× | 9.23 |
+| `3d` | TITAN RTX | 34.1 | **28.5** | out of memory | 1.2× | 175 |
+| `3d` | L40S | 27.1 | **20.6** | 21.5 | 1.3× | 115 |
+| `3d` | H100 | 6.44 | **4.72** | 5.13 | 1.4× | 40.4 |
+
+(`stack` row: TITAN RTX / L40S / H100.)
+
+* Apart from the tiny `2d` preset, CG time is 20 $A^H A$ applications plus 1-3% in both
+  libraries, so the ratios follow the single-application ratios above (1.2-4.2×).
+* The unmasked MR_AHA Toeplitz operator of `3d` (24.0 GB) did not fit next to the other arrays on
+  the 24 GB TITAN RTX in this run; the masked one (15.1 GB) did.
+
 ## Requirements and installation
 
 * Julia ≥ 1.11. Without root, e.g. the official tarball (or [juliaup](https://github.com/JuliaLang/juliaup)):
@@ -209,6 +242,7 @@ env -u LD_LIBRARY_PATH julia -t 8 --project=. bench_aha.jl --data data/stack_nz3
 | `--reps`, `--warmup` | timed and untimed applications | 10, 2 |
 | `--setup-reps` | operator creations; the first is reported as cold | 3 |
 | `--out FILE.json` / `--no-json` | JSON report (default `results/<gpu>/bench_aha_julia_<time>.json`) | |
+| `--cg N` | also time `N` CG iterations (column `CG s`, JSON `cg_s`) | 0 |
 | `--save-result FILE.mat` | write `A^H A x` of the (last) problem, for `check_mr_aha.py` | |
 
 Correctness check against MR_AHA:
